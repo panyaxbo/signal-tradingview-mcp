@@ -67,13 +67,14 @@ def top_losers(
     timeframe: str = Query("15m"),
     limit: int = Query(25, ge=1, le=50),
 ):
-    """Top losers."""
+    """Top losers — fetch all symbols and return the worst performers."""
     exchange = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
-    rows = fetch_trending_analysis(exchange, timeframe=timeframe, limit=limit, losers=True)
+    rows = fetch_trending_analysis(exchange, timeframe=timeframe, limit=500)
+    losers = sorted(rows, key=lambda r: r["changePercent"])[:limit]
     return [
         {"symbol": r["symbol"], "changePercent": r["changePercent"], "indicators": dict(r["indicators"])}
-        for r in rows
+        for r in losers
     ]
 
 
