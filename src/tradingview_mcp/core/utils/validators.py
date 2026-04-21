@@ -14,7 +14,7 @@ _TIMEFRAME_ALIASES = {
 }
 
 # Exchanges that represent stock markets (not crypto)
-STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi", "asx", "sse", "szse", "chn"}
+STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi", "asx", "sse", "szse", "chn", "set"}
 
 EXCHANGE_SCREENER = {
     "all": "crypto",
@@ -48,6 +48,8 @@ EXCHANGE_SCREENER = {
     "sse": "china",         # Shanghai Stock Exchange (上海证券交易所)
     "szse": "china",        # Shenzhen Stock Exchange (深圳证券交易所)
     "chn": "china",         # China A-shares (combined alias)
+    # Thailand Stock Market Support
+    "set": "thailand",      # Stock Exchange of Thailand
 }
 
 # Get absolute path to coinlist directory relative to this module
