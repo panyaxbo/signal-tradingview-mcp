@@ -168,11 +168,15 @@ print("Step 4 done")
 
 # ── STEP 5 — AI Deep Analysis (TradingAgents + DeepSeek) ──────────────────────
 
-# Install tradingagents if missing
+# Install tradingagents if missing (supports both uv-managed and regular venvs)
 try:
     import tradingagents  # noqa: F401
 except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tradingagents"], check=True)
+    # Try uv pip first (uv-managed venvs don't have pip by default)
+    result = subprocess.run(["uv", "pip", "install", "tradingagents"], capture_output=True)
+    if result.returncode != 0:
+        # Fallback: regular pip (for CCR / non-uv environments)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tradingagents"], check=True)
 
 
 def _patch_ta_deepseek() -> None:
