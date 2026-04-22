@@ -247,3 +247,47 @@ for lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
     print(f"Step 5 {lbl} done")
 
 print("All steps complete!")
+
+
+# ── STEP 6 — CDC Fresh Signal Scanner ────────────────────────────────────────
+from tradingview_mcp.core.services.cdc_scanner_service import (
+    scan_yahoo, scan_stocks_parallel, format_fresh_section,
+)
+
+# Commodities
+COMM_TICKERS = [
+    ("GC=F", "GOLD",   "🥇"),
+    ("SI=F", "SILVER", "🥈"),
+    ("HG=F", "COPPER", "🥉"),
+    ("CL=F", "WTI",    "🛢"),
+]
+comm_fresh = scan_yahoo(COMM_TICKERS)
+send(format_fresh_section("🏅 CDC FRESH SIGNAL — COMMODITIES (1D)", comm_fresh))
+
+# US Stocks (parallel)
+US_STOCKS = [
+    "AAPL","MSFT","AMZN","GOOGL","META","NVDA","TSLA","JPM","V","MA",
+    "WMT","JNJ","PG","UNH","HD","BAC","XOM","ABBV","AVGO","COST",
+    "MRK","CVX","KO","PEP","ADBE","CRM","TMO","MCD","NFLX","AMD",
+    "QCOM","WFC","MS","INTC","GS","INTU","UPS","CAT","AMGN","HON",
+    "ORCL","PYPL","SBUX","NKE","DIS","BMY","PFE","SPGI","BLK","TXN",
+    "PRCT","TGLS","IREN","JEPQ","VT",
+]
+us_fresh  = scan_stocks_parallel(US_STOCKS, max_workers=10)
+us_buy    = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
+us_sell   = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
+
+send(format_fresh_section(
+    f"📈 CDC FRESH BUY — US STOCKS (1D)  ({len(us_buy)} ตัว)",
+    us_buy,
+    no_signal_text="ไม่มี fresh BUY signal วันนี้",
+))
+
+if us_sell:
+    send(format_fresh_section(
+        f"📉 CDC FRESH SELL — US STOCKS (1D)  ({len(us_sell)} ตัว)",
+        us_sell,
+        no_signal_text="ไม่มี fresh SELL signal วันนี้",
+    ))
+
+print("Step 6 done")
