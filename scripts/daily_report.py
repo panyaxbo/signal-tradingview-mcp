@@ -166,239 +166,82 @@ send("\n".join(lines))
 print("Step 4 done")
 
 
-# ── STEP 5 — AI Deep Analysis (TradingAgents + DeepSeek) ──────────────────────
-
-# Install tradingagents if missing (supports both uv-managed and regular venvs)
-try:
-    import tradingagents  # noqa: F401
-except ImportError:
-    # Try uv pip first (uv-managed venvs don't have pip by default)
-    result = subprocess.run(["uv", "pip", "install", "tradingagents"], capture_output=True)
-    if result.returncode != 0:
-        # Fallback: regular pip (for CCR / non-uv environments)
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tradingagents"], check=True)
+# ── STEP 5 — AI Deep Analysis (DeepSeek single-call, ~30s per symbol) ──────────
 
 
-def _patch_ta_deepseek() -> None:
-    """Patch TradingAgents in-place to add DeepSeek provider support."""
-    base: str | None = None
-    for d in site.getsitepackages():
-        c = os.path.join(d, "tradingagents")
-        if os.path.isdir(c):
-            base = c
-            break
-    if not base:
-        return
-
-    changed = False
-
-    # 1. default_config.py — add DEEPSEEK to LLMProvider enum
-    p = os.path.join(base, "default_config.py")
-    txt = open(p).read()
-    if "DEEPSEEK" not in txt:
-        for old, new in [
-            ('XAI = "xai"', 'XAI = "xai"\n    DEEPSEEK = "deepseek"'),
-            ("XAI = 'xai'", "XAI = 'xai'\n    DEEPSEEK = 'deepseek'"),
-        ]:
-            if old in txt:
-                open(p, "w").write(txt.replace(old, new))
-                changed = True
-                break
-
-    # 2. factory.py — add "deepseek" to OpenAI-compat list
-    p = os.path.join(base, "llm_clients", "factory.py")
-    txt = open(p).read()
-    if '"deepseek"' not in txt and "'deepseek'" not in txt:
-        for old, new in [
-            ('"xai")', '"xai", "deepseek")'),
-            ("'xai')", "'xai', 'deepseek')"),
-        ]:
-            if old in txt:
-                open(p, "w").write(txt.replace(old, new))
-                changed = True
-                break
-
-    # 3. openai_client.py — add DeepSeek base_url block
-    p = os.path.join(base, "llm_clients", "openai_client.py")
-    txt = open(p).read()
-    if "deepseek" not in txt.lower():
-        ds = (
-            '        elif self.provider == "deepseek":\n'
-            '            llm_kwargs["base_url"] = "https://api.deepseek.com/v1"\n'
-            '            api_key = os.environ.get("DEEPSEEK_API_KEY")\n'
-            '            if api_key:\n'
-            '                llm_kwargs["api_key"] = api_key\n'
-            "        "
-        )
-        for marker in ['        elif self.provider == "openai":', "        elif self.provider == 'openai':"]:
-            if marker in txt:
-                open(p, "w").write(txt.replace(marker, ds + marker.lstrip()))
-                changed = True
-                break
-
-    if changed:
-        for k in list(sys.modules.keys()):
-            if "tradingagents" in k:
-                del sys.modules[k]
-
-
-_patch_ta_deepseek()
-
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import TradingAgentsConfig, LLMProvider
-
-
-def _clean(t: str) -> str:
-    return re.sub(r"\*+|#+\s*", "", t).strip()
-
-
-def _first_s(t: str, n: int = 140) -> str:
-    if not t:
-        return ""
-    t = t.strip()
-    for sep in [". ", "\n\n", "\n"]:
-        i = t.find(sep)
-        if 5 < i <= n:
-            return t[: i + 1].strip()
-    return t[:n].strip()
-
-
-def _extract_pts(fd: str, bh: str, sh: str) -> tuple[str, str, str]:
-    """Extract (bull_point, bear_point, headline) from state strings."""
-    bull = bear = hl = ""
-    if fd:
-        ls = fd.split("\n")
-        for line in ls[:6]:
-            c = _clean(line)
-            if c and any(k in c.upper() for k in ("HOLD", "BUY", "SELL")):
-                hl = c[:200]
-                break
-        ib = is_ = False
-        for line in ls:
-            ll = line.lower()
-            if any(k in ll for k in ("aggressive analyst", "buy/add", "bull")):
-                ib, is_ = True, False
-            elif any(k in ll for k in ("conservative analyst", "sell/trim", "bear", "risk analyst")):
-                if ib:
-                    ib, is_ = False, True
-            s = line.strip()
-            if s.startswith("- ") and len(s) > 12:
-                pt = _clean(s[2:])[:140]
-                if ib and not bull:
-                    bull = pt
-                elif is_ and not bear:
-                    bear = pt
-            if bull and bear:
-                break
-
-    def _from_h(h: str) -> str:
-        if not h:
-            return ""
-        for pfx in ("Bull Analyst:", "Bear Analyst:", "Alright,"):
-            i = h.find(pfx)
-            if 0 <= i < 30:
-                h = h[i + len(pfx) :].strip()
-                break
-        return _first_s(h, 130)
-
-    if not bull:
-        bull = _from_h(bh)
-    if not bear:
-        bear = _from_h(sh)
-    return bull, bear, hl
-
-
-def _conf_pct(dec: str, comb: str, conf: str) -> int:
-    if dec == "HOLD":
-        return 55
-    ab, as_ = dec == "BUY", dec == "SELL"
-    cb, cs = "BUY" in comb, "SELL" in comb
-    if (ab and cb) or (as_ and cs):
-        return {"HIGH": 82, "MEDIUM": 65, "LOW": 48}.get(conf, 60)
-    if (ab and cs) or (as_ and cb):
-        return 35
-    return 52
-
-
-def _run_ta_inner(ticker: str, comb_sig: str, comb_conf: str) -> tuple:
-    cfg = TradingAgentsConfig(
-        llm_provider=LLMProvider.DEEPSEEK,
-        deep_think_llm="deepseek-chat",
-        quick_think_llm="deepseek-chat",
-        max_debate_rounds=1,
-        max_risk_discuss_rounds=1,
-        max_recur_limit=100,
+def deepseek_analyze(label: str, tv_sig: str, cdc_zone: str, combined: str, price_str: str) -> dict:
+    """Single DeepSeek API call via openai client — ~8s, returns BUY/SELL/HOLD with reasoning."""
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+        base_url="https://api.deepseek.com/v1",
     )
-    ta = TradingAgentsGraph(debug=False, config=cfg)
-    state, decision = ta.propagate(ticker, today_date)
-    dec = str(decision).strip().upper()
-    inv = getattr(state, "investment_debate_state", None)
-    bh  = getattr(inv, "bull_history", "") or ""
-    sh  = getattr(inv, "bear_history", "") or ""
-    fd  = getattr(state, "final_trade_decision", "") or ""
-    bull, bear, hl = _extract_pts(fd, bh, sh)
-    return dec, _conf_pct(dec, comb_sig, comb_conf), bull, bear, hl
+    prompt = (
+        f"You are an expert financial analyst. Analyze {label}.\n\n"
+        f"Current signals:\n"
+        f"- TradingView Signal: {tv_sig}\n"
+        f"- CDC Action Zone: {cdc_zone}\n"
+        f"- Combined Signal: {combined}\n"
+        f"- Price: {price_str}\n\n"
+        'Respond ONLY in this exact JSON (no markdown):\n'
+        '{"decision":"BUY|SELL|HOLD","confidence":75,'
+        '"bull":"bullish reason max 15 words",'
+        '"bear":"bearish risk max 15 words",'
+        '"action":"actionable advice max 20 words"}'
+    )
+    resp    = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=200,
+    )
+    content = resp.choices[0].message.content.strip()
+    content = re.sub(r"^```[a-z]*\n?|\n?```$", "", content).strip()
+    return json.loads(content)
 
 
-def run_ta(ticker: str, comb_sig: str = "NEUTRAL", comb_conf: str = "MEDIUM", timeout: int = 300) -> tuple:
-    """Run TradingAgents with a hard timeout (default 5 min) to prevent hanging."""
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        future = ex.submit(_run_ta_inner, ticker, comb_sig, comb_conf)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(f"AI analysis timed out after {timeout//60} min")
-
-
-# Targets: (ta_ticker, label, emoji, tv_exchange, tv_symbol, tv_tf, cdc_exchange)
+# Targets: (label, emoji, tv_exchange, tv_symbol, tv_tf, cdc_exchange)
 AI_TARGETS = [
-    ("AAPL",    "AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"),
-    ("BTC-USD", "BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"),
-    ("GLD",     "GOLD", "🥇", None,      "GC=F",    "1D", "yahoo"),
+    ("AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"),
+    ("BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"),
+    ("GOLD", "🥇", None,      "GC=F",    "1D", "yahoo"),
 ]
 
-for ta_tick, lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
-    # Notify Telegram that analysis is starting
-    send(f"{emo} <b>AI ANALYSIS — {lbl}</b>\n⏳ กำลังวิเคราะห์ด้วย DeepSeek AI... (รอ ~2-3 นาที)")
-
-    blk = [f"{emo} <b>AI ANALYSIS — {lbl}</b>", ""]
-    tv_sig = None
-    comb_s = "NEUTRAL"
-    comb_e = "➖"
-    comb_c = "MEDIUM"
+for lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
+    blk      = [f"{emo} <b>AI ANALYSIS — {lbl}</b>", ""]
+    tv_sig   = "N/A"
+    cdc_zone = "-"
+    comb_s   = "NEUTRAL"
+    price_str = ""
 
     try:
         if tv_ex:
-            d      = analyze_coin(tv_sym, tv_ex, tv_tf)
-            tv_sig = d.get("market_sentiment", {}).get("buy_sell_signal", "NEUTRAL")
-            blk.append(f"📊 TV Signal: {tv_sig}")
-        else:
-            blk.append("📊 TV Signal: N/A")
-
-        cdc    = analyze_cdc(tv_sym, cdc_ex, tv_tf, tv_sig)
-        comb_s = cdc.get("signal", "NEUTRAL")
-        comb_e = cdc.get("sig_emoji", "➖")
-        comb_c = cdc.get("confidence", "MEDIUM")
-        blk.append(f"{cdc.get('cdc_emoji', '⚪')} CDC Zone: {cdc.get('cdc_zone', '-')}")
-        blk.append(f"{comb_e} Combined: {comb_s}")
+            d         = analyze_coin(tv_sym, tv_ex, tv_tf)
+            tv_sig    = d.get("market_sentiment", {}).get("buy_sell_signal", "NEUTRAL")
+            price     = d.get("price_data", {}).get("current_price", 0)
+            price_str = f"${price:,.2f}" if price else ""
+        cdc      = analyze_cdc(tv_sym, cdc_ex, tv_tf, tv_sig if tv_ex else None)
+        cdc_zone = cdc.get("cdc_zone", "-")
+        comb_s   = cdc.get("signal", "NEUTRAL")
+        blk.append(f"📊 TV Signal: {tv_sig}")
+        blk.append(f"{cdc.get('cdc_emoji','⚪')} CDC Zone: {cdc_zone}")
+        blk.append(f"{cdc.get('sig_emoji','➖')} Combined: {comb_s}")
     except Exception as ex:
-        blk.append(f"⚠️ CDC error: {ex}")
+        blk.append(f"⚠️ Signal error: {ex}")
 
     blk.append("")
 
     try:
-        dec, pct, bull, bear, hl = run_ta(ta_tick, comb_s, comb_c, timeout=300)
-        de = {"BUY": "✅", "SELL": "❌", "HOLD": "⏸"}.get(dec, "❓")
+        ai  = deepseek_analyze(lbl, tv_sig, cdc_zone, comb_s, price_str)
+        dec = str(ai.get("decision", "HOLD")).upper()
+        pct = int(ai.get("confidence", 60))
+        de  = {"BUY": "✅", "SELL": "❌", "HOLD": "⏸"}.get(dec, "❓")
         blk.append(f"🤖 AI Consensus: {de} <b>{dec}</b> ({pct}%)")
-        if bull:
-            blk.append(f"🟢 Bull: {bull}")
-        if bear:
-            blk.append(f"🔴 Bear: {bear}")
-        if hl:
-            blk.append(f"📝 {hl}")
+        if ai.get("bull"):   blk.append(f"🟢 Bull: {ai['bull']}")
+        if ai.get("bear"):   blk.append(f"🔴 Bear: {ai['bear']}")
+        if ai.get("action"): blk.append(f"📝 {ai['action']}")
     except Exception as ex:
-        blk.append(f"🤖 AI: ⚠️ {str(ex)[:100]}")
+        blk.append(f"🤖 AI: ⚠️ {str(ex)[:80]}")
 
     send("\n".join(blk))
     print(f"Step 5 {lbl} done")
