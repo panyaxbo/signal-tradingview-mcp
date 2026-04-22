@@ -249,10 +249,12 @@ for lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
 print("All steps complete!")
 
 
-# ── STEP 6 — CDC Fresh Signal Scanner ────────────────────────────────────────
+# ── STEP 6 — CDC Fresh Signal Scanner (DOW 30 + NASDAQ 100 + S&P 500) ─────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_yahoo, scan_stocks_parallel, format_fresh_section,
+    scan_yahoo, scan_index_stocks, format_fresh_section,
 )
+
+send("🔍 <b>CDC Fresh Signal Scanner</b>\n⏳ กำลัง scan DOW 30 + NASDAQ 100 + S&P 500 รอสักครู่...")
 
 # Commodities
 COMM_TICKERS = [
@@ -264,30 +266,21 @@ COMM_TICKERS = [
 comm_fresh = scan_yahoo(COMM_TICKERS)
 send(format_fresh_section("🏅 CDC FRESH SIGNAL — COMMODITIES (1D)", comm_fresh))
 
-# US Stocks (parallel)
-US_STOCKS = [
-    "AAPL","MSFT","AMZN","GOOGL","META","NVDA","TSLA","JPM","V","MA",
-    "WMT","JNJ","PG","UNH","HD","BAC","XOM","ABBV","AVGO","COST",
-    "MRK","CVX","KO","PEP","ADBE","CRM","TMO","MCD","NFLX","AMD",
-    "QCOM","WFC","MS","INTC","GS","INTU","UPS","CAT","AMGN","HON",
-    "ORCL","PYPL","SBUX","NKE","DIS","BMY","PFE","SPGI","BLK","TXN",
-    "PRCT","TGLS","IREN","JEPQ","VT",
-]
-us_fresh  = scan_stocks_parallel(US_STOCKS, max_workers=10)
-us_buy    = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
-us_sell   = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
+# Full US index scan — batch yfinance download (one HTTP call) + CDC detection
+us_fresh = scan_index_stocks()          # DOW 30 + NASDAQ 100 + S&P 500
+us_buy   = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
+us_sell  = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
 
 send(format_fresh_section(
-    f"📈 CDC FRESH BUY — US STOCKS (1D)  ({len(us_buy)} ตัว)",
+    f"📈 CDC FRESH BUY — DOW/NASDAQ/S&P (1D)  ({len(us_buy)} ตัว)",
     us_buy,
     no_signal_text="ไม่มี fresh BUY signal วันนี้",
 ))
 
-if us_sell:
-    send(format_fresh_section(
-        f"📉 CDC FRESH SELL — US STOCKS (1D)  ({len(us_sell)} ตัว)",
-        us_sell,
-        no_signal_text="ไม่มี fresh SELL signal วันนี้",
-    ))
+send(format_fresh_section(
+    f"📉 CDC FRESH SELL — DOW/NASDAQ/S&P (1D)  ({len(us_sell)} ตัว)",
+    us_sell,
+    no_signal_text="ไม่มี fresh SELL signal วันนี้",
+))
 
 print("Step 6 done")
