@@ -183,19 +183,29 @@ def _batch_fetch_closes(symbols: list[str], period: str = "3mo") -> dict[str, li
     if data.empty:
         return result
 
-    # MultiIndex case (multiple tickers)
     if isinstance(data.columns, pd.MultiIndex):
+        lvl0 = data.columns.get_level_values(0).unique().tolist()
+        lvl1 = data.columns.get_level_values(1).unique().tolist()
+
+        # yfinance ≥1.x: level 0 = ticker, level 1 = OHLCV  → data[sym]["Close"]
+        # yfinance  old : level 0 = OHLCV,  level 1 = ticker → data["Close"][sym]
+        ticker_first = "Close" not in lvl0 and any(s in lvl0 for s in symbols[:3])
+
         for sym in symbols:
             try:
-                closes = data["Close"][sym].dropna().tolist()
+                if ticker_first:
+                    closes = data[sym]["Close"].dropna().tolist()
+                else:
+                    closes = data["Close"][sym].dropna().tolist()
                 if len(closes) >= 30:
                     result[sym] = closes
             except Exception:
                 pass
     else:
-        # Single ticker edge case
-        if len(symbols) == 1:
-            closes = data["Close"].dropna().tolist()
+        # Single ticker — flat columns
+        col = "Close" if "Close" in data.columns else "close"
+        if col in data.columns and len(symbols) == 1:
+            closes = data[col].dropna().tolist()
             if len(closes) >= 30:
                 result[symbols[0]] = closes
 
