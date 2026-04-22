@@ -131,6 +131,9 @@ def analyze_cdc(
         closes = fetch_ohlcv_yahoo(symbol.upper(), period="3mo", interval="1d")
     elif exchange == "set":
         closes = fetch_ohlcv_yahoo(f"{symbol.upper()}.BK", period="3mo", interval="1d")
+    elif exchange == "yahoo":
+        # direct Yahoo Finance ticker — for commodities e.g. GC=F, SI=F, CL=F
+        closes = fetch_ohlcv_yahoo(symbol, period="3mo", interval="1d")
     else:
         # fallback yahoo
         closes = fetch_ohlcv_yahoo(symbol.upper(), period="3mo", interval="1d")
@@ -164,6 +167,15 @@ def analyze_cdc(
             "signal":     combined["signal"],
             "sig_emoji":  combined["emoji"],
             "confidence": combined["confidence"],
+        })
+    else:
+        # No TV signal — use CDC bias alone (e.g. commodities)
+        bias_emoji = {"BUY": "🟢", "SELL": "🔴", "NEUTRAL": "🟡"}.get(cdc["bias"], "⚪")
+        result.update({
+            "tv_signal":  None,
+            "signal":     f"CDC {cdc['bias']}",
+            "sig_emoji":  bias_emoji,
+            "confidence": "MEDIUM",
         })
 
     return result
