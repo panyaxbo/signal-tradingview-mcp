@@ -320,7 +320,7 @@ def _conf_pct(dec: str, comb: str, conf: str) -> int:
     return 52
 
 
-def run_ta(ticker: str, comb_sig: str = "NEUTRAL", comb_conf: str = "MEDIUM") -> tuple:
+def _run_ta_inner(ticker: str, comb_sig: str, comb_conf: str) -> tuple:
     cfg = TradingAgentsConfig(
         llm_provider=LLMProvider.DEEPSEEK,
         deep_think_llm="deepseek-chat",
@@ -340,6 +340,17 @@ def run_ta(ticker: str, comb_sig: str = "NEUTRAL", comb_conf: str = "MEDIUM") ->
     return dec, _conf_pct(dec, comb_sig, comb_conf), bull, bear, hl
 
 
+def run_ta(ticker: str, comb_sig: str = "NEUTRAL", comb_conf: str = "MEDIUM", timeout: int = 300) -> tuple:
+    """Run TradingAgents with a hard timeout (default 5 min) to prevent hanging."""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(_run_ta_inner, ticker, comb_sig, comb_conf)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(f"AI analysis timed out after {timeout//60} min")
+
+
 # Targets: (ta_ticker, label, emoji, tv_exchange, tv_symbol, tv_tf, cdc_exchange)
 AI_TARGETS = [
     ("AAPL",    "AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"),
@@ -348,6 +359,9 @@ AI_TARGETS = [
 ]
 
 for ta_tick, lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
+    # Notify Telegram that analysis is starting
+    send(f"{emo} <b>AI ANALYSIS — {lbl}</b>\n⏳ กำลังวิเคราะห์ด้วย DeepSeek AI... (รอ ~2-3 นาที)")
+
     blk = [f"{emo} <b>AI ANALYSIS — {lbl}</b>", ""]
     tv_sig = None
     comb_s = "NEUTRAL"
@@ -374,7 +388,7 @@ for ta_tick, lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
     blk.append("")
 
     try:
-        dec, pct, bull, bear, hl = run_ta(ta_tick, comb_s, comb_c)
+        dec, pct, bull, bear, hl = run_ta(ta_tick, comb_s, comb_c, timeout=300)
         de = {"BUY": "✅", "SELL": "❌", "HOLD": "⏸"}.get(dec, "❓")
         blk.append(f"🤖 AI Consensus: {de} <b>{dec}</b> ({pct}%)")
         if bull:
@@ -384,7 +398,7 @@ for ta_tick, lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
         if hl:
             blk.append(f"📝 {hl}")
     except Exception as ex:
-        blk.append(f"🤖 AI: ⚠️ {ex}")
+        blk.append(f"🤖 AI: ⚠️ {str(ex)[:100]}")
 
     send("\n".join(blk))
     print(f"Step 5 {lbl} done")
