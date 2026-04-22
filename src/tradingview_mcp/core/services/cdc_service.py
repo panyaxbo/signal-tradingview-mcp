@@ -91,6 +91,12 @@ def fetch_ohlcv_yahoo(ticker: str, period: str = "3mo", interval: str = "1d") ->
         df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
         if df.empty:
             return []
+        # yfinance >= 0.2 returns MultiIndex columns e.g. ('Close', 'AAPL')
+        if isinstance(df.columns, __import__('pandas').MultiIndex):
+            close_col = [c for c in df.columns if c[0] == "Close"]
+            if not close_col:
+                return []
+            return df[close_col[0]].dropna().tolist()
         return df["Close"].dropna().tolist()
     except Exception:
         return []
