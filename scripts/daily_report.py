@@ -323,7 +323,7 @@ def _conf_pct(dec: str, comb: str, conf: str) -> int:
 def run_ta(ticker: str, comb_sig: str = "NEUTRAL", comb_conf: str = "MEDIUM") -> tuple:
     cfg = TradingAgentsConfig(
         llm_provider=LLMProvider.DEEPSEEK,
-        deep_think_llm="deepseek-reasoner",
+        deep_think_llm="deepseek-chat",
         quick_think_llm="deepseek-chat",
         max_debate_rounds=1,
         max_risk_discuss_rounds=1,
