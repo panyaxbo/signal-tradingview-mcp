@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📊 Daily Report Config</title>
+<style>
+  :root {
+    --bg: #0f1117; --card: #1a1d27; --border: #2a2d3e;
+    --accent: #6c63ff; --green: #00d395; --red: #ff6b6b;
+    --text: #e2e8f0; --muted: #6b7280; --yellow: #fbbf24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  .topbar {
+    background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar h1 { font-size: 18px; font-weight: 700; }
+  .topbar .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  .dot.off { background: var(--muted); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .layout { display: grid; grid-template-columns: 1fr 380px; gap: 0; min-height: calc(100vh - 57px); }
+  .main { padding: 24px; overflow-y: auto; }
+  .sidebar { background: var(--card); border-left: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 14px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* Schedule */
+  .schedule-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none;
+    transition: border-color .2s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field input[type=number] { width: 80px; }
+
+  /* Tag input */
+  .tag-box {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; cursor: text;
+    min-height: 44px; transition: border-color .2s;
+  }
+  .tag-box:focus-within { border-color: var(--accent); }
+  .tag {
+    background: var(--border); border-radius: 6px; padding: 3px 8px 3px 10px;
+    font-size: 13px; display: flex; align-items: center; gap: 5px;
+    font-weight: 600; letter-spacing: .03em;
+  }
+  .tag .rm {
+    cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1;
+    padding: 0 1px;
+  }
+  .tag .rm:hover { color: var(--red); }
+  .tag-input {
+    background: transparent; border: none; outline: none; color: var(--text);
+    font-size: 13px; min-width: 80px; flex: 1;
+  }
+
+  /* CDC toggles */
+  .toggle-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .toggle-btn {
+    padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border); cursor: pointer; background: var(--bg);
+    color: var(--muted); transition: all .2s;
+  }
+  .toggle-btn.on { background: rgba(108,99,255,.2); border-color: var(--accent); color: var(--accent); }
+
+  /* AI targets table */
+  .ai-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .ai-row input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px; outline: none;
+  }
+  .ai-row input:focus { border-color: var(--accent); }
+  .ai-row .rm-btn { cursor: pointer; color: var(--muted); font-size: 18px; }
+  .ai-row .rm-btn:hover { color: var(--red); }
+  .add-btn {
+    background: transparent; border: 1px dashed var(--border); color: var(--muted);
+    border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+    transition: all .2s;
+  }
+  .add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Sidebar buttons */
+  .btn {
+    width: 100%; padding: 12px; border-radius: 10px; font-size: 14px; font-weight: 700;
+    border: none; cursor: pointer; transition: all .2s; letter-spacing: .02em;
+  }
+  .btn-save { background: var(--accent); color: white; }
+  .btn-save:hover { background: #5a52e0; }
+  .btn-save:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-run { background: rgba(0,211,149,.15); color: var(--green); border: 1px solid var(--green); }
+  .btn-run:hover { background: rgba(0,211,149,.25); }
+  .btn-run:disabled { opacity: .5; cursor: not-allowed; }
+
+  .next-run { background: var(--bg); border-radius: 8px; padding: 12px; font-size: 13px; }
+  .next-run .label { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .next-run .val { font-weight: 600; color: var(--yellow); }
+
+  /* Log console */
+  .log-console {
+    background: #0a0c10; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: 'Courier New', monospace; font-size: 11px;
+    height: 260px; overflow-y: auto; color: #a3e635; flex: 1;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .log-console .log-info  { color: #a3e635; }
+  .log-console .log-error { color: var(--red); }
+  .log-console .log-step  { color: var(--accent); font-weight: bold; }
+  .log-console .log-done  { color: var(--green); font-weight: bold; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px;
+    font-size: 14px; z-index: 999; opacity: 0; transition: opacity .3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .toast.ok   { border-color: var(--green); color: var(--green); }
+  .toast.err  { border-color: var(--red);   color: var(--red);   }
+
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { border-left: none; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span style="font-size:22px">📊</span>
+  <h1>Daily Report Config</h1>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="status-txt">ปกติ</span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- ── Main config ── -->
+  <div class="main">
+
+    <!-- Schedule -->
+    <div class="card">
+      <div class="card-title">⏰ กำหนดเวลาส่ง Report</div>
+      <div class="schedule-row">
+        <div class="field">
+          <label>ชั่วโมง (0–23)</label>
+          <input type="number" id="sch-hour" min="0" max="23" value="7">
+        </div>
+        <div class="field">
+          <label>นาที (0–59)</label>
+          <input type="number" id="sch-min" min="0" max="59" value="0">
+        </div>
+        <div class="field">
+          <label>Timezone</label>
+          <select id="sch-tz">
+            <option value="Asia/Bangkok">Asia/Bangkok (UTC+7)</option>
+            <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
+            <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
+            <option value="UTC">UTC</option>
+            <option value="America/New_York">America/New York</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Watchlist Crypto -->
+    <div class="card">
+      <div class="card-title">₿ Watchlist — Crypto (Binance 1H)</div>
+      <div class="tag-box" id="tags-crypto"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">พิมพ์ ticker แล้วกด Enter หรือ Space (เช่น BNBUSDT)</div>
+    </div>
+
+    <!-- Watchlist Stocks US -->
+    <div class="card">
+      <div class="card-title">🏢 Watchlist — Stocks US (NASDAQ 1D)</div>
+      <div class="tag-box" id="tags-us"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">เช่น AAPL, TSLA, NVDA</div>
+    </div>
+
+    <!-- Watchlist Stocks TH -->
+    <div class="card">
+      <div class="card-title">🇹🇭 Watchlist — Stocks TH (SET 1D)</div>
+      <div class="tag-box" id="tags-th"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">เช่น SCB, KTB, AOT</div>
+    </div>
+
+    <!-- CDC Scanner -->
+    <div class="card">
+      <div class="card-title">🔍 CDC Fresh Signal Scanner (1D)</div>
+      <div class="toggle-row">
+        <button class="toggle-btn on" data-cdc="commodities">🏅 Commodities</button>
+        <button class="toggle-btn on" data-cdc="dow30">DOW 30</button>
+        <button class="toggle-btn on" data-cdc="nasdaq100">NASDAQ 100</button>
+        <button class="toggle-btn on" data-cdc="sp500">S&amp;P 500</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:10px">เปิด/ปิด ว่าจะ scan index ไหนบ้างในตอนเช้า</div>
+    </div>
+
+    <!-- AI Targets -->
+    <div class="card">
+      <div class="card-title">🤖 AI Deep Analysis (DeepSeek)</div>
+      <div id="ai-targets"></div>
+      <button class="add-btn" onclick="addAiRow()">+ เพิ่ม symbol</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">Label · Emoji · Exchange (nasdaq/binance/yahoo) · Symbol · TF · CDC exchange</div>
+    </div>
+
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+
+    <div class="next-run">
+      <div class="label">⏰ Next Run</div>
+      <div class="val" id="next-run">กำลังโหลด...</div>
+    </div>
+
+    <button class="btn btn-save" id="btn-save" onclick="saveConfig()">💾 Save Config</button>
+    <button class="btn btn-run"  id="btn-run"  onclick="runNow()">▶️ Run Now</button>
+
+    <div style="font-size:12px;color:var(--muted);font-weight:600;margin-top:4px">📋 Live Log</div>
+    <div class="log-console" id="log-console">รอ log...</div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let cfg = {};
+let pollTimer = null;
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+async function init() {
+  cfg = await fetch('/api/config').then(r => r.json());
+  renderAll();
+  pollSchedule();
+  pollLog();
+}
+
+function renderAll() {
+  document.getElementById('sch-hour').value = cfg.schedule?.hour ?? 7;
+  document.getElementById('sch-min').value  = cfg.schedule?.minute ?? 0;
+  document.getElementById('sch-tz').value   = cfg.schedule?.timezone ?? 'Asia/Bangkok';
+
+  renderTagBox('tags-crypto', getCryptoLabels());
+  renderTagBox('tags-us',     cfg.watchlist?.stocks_us ?? []);
+  renderTagBox('tags-th',     cfg.watchlist?.stocks_th ?? []);
+  renderCDC();
+  renderAiTargets();
+}
+
+function getCryptoLabels() {
+  return (cfg.watchlist?.crypto ?? []).map(c => Array.isArray(c) ? c[0] : c);
+}
+
+// ── Tag box ────────────────────────────────────────────────────────────────────
+function renderTagBox(id, items) {
+  const box = document.getElementById(id);
+  box.innerHTML = '';
+  items.forEach(sym => box.appendChild(makeTag(id, sym)));
+  const inp = document.createElement('input');
+  inp.className = 'tag-input';
+  inp.placeholder = '+ เพิ่ม...';
+  inp.onkeydown = e => {
+    if ((e.key === 'Enter' || e.key === ' ') && inp.value.trim()) {
+      e.preventDefault();
+      const v = inp.value.trim().toUpperCase();
+      box.insertBefore(makeTag(id, v), inp);
+      inp.value = '';
+      syncFromBoxes();
+    } else if (e.key === 'Backspace' && !inp.value) {
+      const tags = box.querySelectorAll('.tag');
+      if (tags.length) tags[tags.length-1].remove(), syncFromBoxes();
+    }
+  };
+  box.appendChild(inp);
+  box.onclick = () => inp.focus();
+}
+
+function makeTag(boxId, sym) {
+  const t = document.createElement('span');
+  t.className = 'tag';
+  t.innerHTML = `${sym}<span class="rm" title="ลบ">×</span>`;
+  t.querySelector('.rm').onclick = e => { e.stopPropagation(); t.remove(); syncFromBoxes(); };
+  return t;
+}
+
+function getTagValues(id) {
+  return [...document.querySelectorAll(`#${id} .tag`)].map(t => t.textContent.slice(0,-1));
+}
+
+function syncFromBoxes() {
+  const cryptoSyms = getTagValues('tags-crypto');
+  cfg.watchlist.crypto = cryptoSyms.map(s => [s, s.replace('USDT','')]);
+  cfg.watchlist.stocks_us = getTagValues('tags-us');
+  cfg.watchlist.stocks_th = getTagValues('tags-th');
+}
+
+// ── CDC toggles ────────────────────────────────────────────────────────────────
+function renderCDC() {
+  document.querySelectorAll('[data-cdc]').forEach(btn => {
+    const key = btn.dataset.cdc;
+    const on  = cfg.cdc_scanner?.[key] ?? true;
+    btn.classList.toggle('on', on);
+  });
+}
+document.querySelectorAll('[data-cdc]').forEach(btn => {
+  btn.onclick = () => {
+    const key = btn.dataset.cdc;
+    cfg.cdc_scanner[key] = !cfg.cdc_scanner[key];
+    btn.classList.toggle('on', cfg.cdc_scanner[key]);
+  };
+});
+
+// ── AI targets ─────────────────────────────────────────────────────────────────
+function renderAiTargets() {
+  const wrap = document.getElementById('ai-targets');
+  wrap.innerHTML = '';
+  (cfg.ai_targets ?? []).forEach((t, i) => {
+    wrap.appendChild(makeAiRow(t, i));
+  });
+}
+
+function makeAiRow(t, i) {
+  const row = document.createElement('div');
+  row.className = 'ai-row';
+  row.dataset.idx = i;
+  const fields = [
+    { ph: 'Label',    val: t[0] ?? '', w: 70  },
+    { ph: 'Emoji',    val: t[1] ?? '', w: 55  },
+    { ph: 'Exchange', val: t[2] ?? '', w: 90  },
+    { ph: 'Symbol',   val: t[3] ?? '', w: 100 },
+    { ph: 'TF',       val: t[4] ?? '', w: 55  },
+    { ph: 'CDC exch', val: t[5] ?? '', w: 90  },
+  ];
+  fields.forEach(({ ph, val, w }, fi) => {
+    const inp = document.createElement('input');
+    inp.placeholder = ph; inp.value = val; inp.style.width = w + 'px';
+    inp.oninput = () => { cfg.ai_targets[i][fi] = inp.value || null; };
+    row.appendChild(inp);
+  });
+  const rm = document.createElement('span');
+  rm.className = 'rm-btn'; rm.textContent = '×';
+  rm.onclick = () => { cfg.ai_targets.splice(i, 1); renderAiTargets(); };
+  row.appendChild(rm);
+  return row;
+}
+
+function addAiRow() {
+  cfg.ai_targets.push(['', '', '', '', '1D', '']);
+  renderAiTargets();
+}
+
+// ── Save ───────────────────────────────────────────────────────────────────────
+async function saveConfig() {
+  syncFromBoxes();
+  cfg.schedule = {
+    hour:     parseInt(document.getElementById('sch-hour').value) || 7,
+    minute:   parseInt(document.getElementById('sch-min').value)  || 0,
+    timezone: document.getElementById('sch-tz').value,
+  };
+  const btn = document.getElementById('btn-save');
+  btn.disabled = true; btn.textContent = '💾 กำลัง Save...';
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    showToast('✅ บันทึกสำเร็จ — Schedule อัพเดตแล้ว', 'ok');
+    pollSchedule();
+  } catch(e) {
+    showToast('❌ Save failed: ' + e, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 Save Config';
+  }
+}
+
+// ── Run Now ────────────────────────────────────────────────────────────────────
+async function runNow() {
+  const btn = document.getElementById('btn-run');
+  btn.disabled = true; btn.textContent = '⏳ กำลัง Run...';
+  const r = await fetch('/api/run', { method: 'POST' }).then(x => x.json());
+  if (r.ok) {
+    showToast('▶️ เริ่มรันแล้ว! ดู log ด้านล่าง', 'ok');
+    startLogPoll();
+  } else {
+    showToast('⚠️ ' + r.message, 'err');
+    btn.disabled = false; btn.textContent = '▶️ Run Now';
+  }
+}
+
+// ── Log polling ────────────────────────────────────────────────────────────────
+function startLogPoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollLog, 2000);
+}
+
+async function pollLog() {
+  const s = await fetch('/api/run/status').then(r => r.json());
+  const console_ = document.getElementById('log-console');
+  const dot = document.getElementById('dot');
+  const statusTxt = document.getElementById('status-txt');
+  const runBtn = document.getElementById('btn-run');
+
+  if (s.running) {
+    dot.classList.remove('off');
+    statusTxt.textContent = 'กำลังรัน...';
+    runBtn.disabled = true;
+    runBtn.textContent = '⏳ กำลัง Run...';
+  } else {
+    dot.classList.add('off');
+    statusTxt.textContent = 'ปกติ';
+    runBtn.disabled = false;
+    runBtn.textContent = '▶️ Run Now';
+    if (pollTimer && !s.running) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  if (s.log && s.log.length) {
+    console_.innerHTML = s.log.map(line => {
+      if (line.includes('done') || line.includes('complete'))
+        return `<span class="log-done">${esc(line)}</span>`;
+      if (line.includes('Step ') || line.includes('Scanning'))
+        return `<span class="log-step">${esc(line)}</span>`;
+      if (line.includes('ERROR') || line.includes('error'))
+        return `<span class="log-error">${esc(line)}</span>`;
+      return `<span class="log-info">${esc(line)}</span>`;
+    }).join('\n');
+    console_.scrollTop = console_.scrollHeight;
+  }
+}
+
+// ── Schedule poll ──────────────────────────────────────────────────────────────
+async function pollSchedule() {
+  try {
+    const s = await fetch('/api/schedule').then(r => r.json());
+    const el = document.getElementById('next-run');
+    if (s.next_run) {
+      const d = new Date(s.next_run);
+      el.textContent = d.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok',
+        dateStyle:'medium', timeStyle:'short' });
+    } else { el.textContent = 'ไม่มีกำหนด'; }
+  } catch { document.getElementById('next-run').textContent = 'N/A'; }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = `toast show ${type}`;
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+init();
+setInterval(pollSchedule, 30000);
+startLogPoll();
+</script>
+</body>
+</html>

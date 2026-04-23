@@ -1,0 +1,34 @@
+{
+  "schedule": {
+    "hour": 7,
+    "minute": 0,
+    "timezone": "Asia/Bangkok"
+  },
+  "watchlist": {
+    "crypto": [
+      ["BTCUSDT", "BTC"],
+      ["ETHUSDT", "ETH"],
+      ["SOLUSDT", "SOL"],
+      ["XRPUSDT", "XRP"]
+    ],
+    "commodities": [
+      ["GC=F", "GOLD", "🥇"],
+      ["SI=F", "SILVER", "🥈"],
+      ["HG=F", "COPPER", "🥉"],
+      ["CL=F", "WTI", "🛢"]
+    ],
+    "stocks_us": ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "GOOG", "PRCT", "TGLS", "IREN", "VT", "JEPQ"],
+    "stocks_th": ["SCB", "KTB", "BCPG"]
+  },
+  "cdc_scanner": {
+    "commodities": true,
+    "dow30": true,
+    "nasdaq100": true,
+    "sp500": true
+  },
+  "ai_targets": [
+    ["AAPL", "🍎", "nasdaq", "AAPL", "1D", "nasdaq"],
+    ["BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"],
+    ["GOLD", "🥇", null,      "GC=F",    "1D", "yahoo"]
+  ]
+}

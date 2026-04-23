@@ -1,48 +1,61 @@
 """
 Daily Market Report — Telegram Bot
-Runs every morning at 07:00 Bangkok time via Claude Remote Trigger.
+Runs every morning via APScheduler (FastAPI) or Claude Remote Trigger.
 
 Sections:
   1. Starting message
   2. Top 20 Gainers (Binance 1h)
   3. Top 20 Losers  (Binance 1h)
-  4. Watchlist — TV signal + CDC Action Zone (Crypto / Commodities / Stocks US / Stocks TH)
-  5. AI Deep Analysis — TradingAgents + DeepSeek (AAPL, BTC, GOLD)
+  4. Watchlist — TV signal + CDC Action Zone
+  5. AI Deep Analysis — DeepSeek (configurable targets)
+  6. CDC Fresh Signal Scanner — DOW/NASDAQ/S&P (configurable)
+
+Config: ../config.json
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import site
-import subprocess
 import sys
 import urllib.request
 
-# ── Ensure src/ is on path ─────────────────────────────────────────────────────
+# ── Path setup ─────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# ── Load config ────────────────────────────────────────────────────────────────
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.json")
+
+def _load_cfg() -> dict:
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+CFG = _load_cfg()
+
+# ── Credentials ────────────────────────────────────────────────────────────────
 BOT  = "8720452318:AAGgh2WXUW6JFw_Z71eMUBZ0bi-n5eHnwuE"
 CHAT = "5636156156"
 BASE = "https://signal-tradingview-mcp.up.railway.app"
 os.environ.setdefault("DEEPSEEK_API_KEY", "sk-9d9423f9ab86437197bbe96180d401e3")
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def send(msg: str) -> bool:
-    payload = json.dumps({"chat_id": CHAT, "text": msg, "parse_mode": "HTML"}).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{BOT}/sendMessage",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        return json.loads(urllib.request.urlopen(req).read()).get("ok", False)
-    except Exception as e:
-        print("Send error:", e)
-        return False
+    for chunk in [msg[i:i+4000] for i in range(0, max(len(msg),1), 4000)]:
+        payload = json.dumps({"chat_id": CHAT, "text": chunk, "parse_mode": "HTML"}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{BOT}/sendMessage",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            json.loads(urllib.request.urlopen(req).read())
+        except Exception as e:
+            print("Send error:", e)
+    return True
 
 
 def fetch(url: str):
@@ -66,7 +79,7 @@ today_date = datetime.now().strftime("%Y-%m-%d")
 
 
 # ── STEP 1 — Starting message ──────────────────────────────────────────────────
-send(f"🤖 <b>Daily Market Report</b>\n🗓 {today} | 07:00 BKK\n⏳ กำลังดึงข้อมูล รอสักครู่นะครับ...")
+send(f"🤖 <b>Daily Market Report</b>\n🗓 {today} | กำลังดึงข้อมูล รอสักครู่นะครับ...")
 print("Step 1 done")
 
 
@@ -97,17 +110,24 @@ from tradingview_mcp.core.services.screener_service import analyze_coin
 from tradingview_mcp.core.services.yahoo_finance_service import get_price
 from tradingview_mcp.core.services.cdc_service import analyze_cdc
 
+wl = CFG.get("watchlist", {})
+
 lines = ["🎯 <b>WATCHLIST — TECHNICAL SIGNALS</b>", ""]
 
 # Crypto
+crypto_list = wl.get("crypto", [
+    ["BTCUSDT","BTC"],["ETHUSDT","ETH"],["SOLUSDT","SOL"],["XRPUSDT","XRP"]
+])
 lines.append("─── CRYPTO ───")
-for sym, label in [("BTCUSDT", "BTC"), ("ETHUSDT", "ETH"), ("SOLUSDT", "SOL"), ("XRPUSDT", "XRP")]:
+for item in crypto_list:
+    sym, label = (item[0], item[1]) if isinstance(item, list) else (item, item)
     try:
-        d    = analyze_coin(sym, "binance", "1h")
-        sig  = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
+        d     = analyze_coin(sym, "binance", "1h")
+        sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
         price = d.get("price_data", {}).get("current_price", 0)
         if not price:
-            r2    = json.loads(urllib.request.urlopen(f"https://api.binance.com/api/v3/ticker/price?symbol={sym}", timeout=5).read())
+            r2    = json.loads(urllib.request.urlopen(
+                f"https://api.binance.com/api/v3/ticker/price?symbol={sym}", timeout=5).read())
             price = float(r2.get("price", 0))
         rsi   = d.get("rsi", {}).get("value", "N/A")
         rsi_s = f"{rsi:.1f}" if isinstance(rsi, float) else str(rsi)
@@ -117,8 +137,13 @@ for sym, label in [("BTCUSDT", "BTC"), ("ETHUSDT", "ETH"), ("SOLUSDT", "SOL"), (
         lines.append(f"⚠️ <b>{label}</b>  N/A")
 
 # Commodities
+comm_list = wl.get("commodities", [
+    ["GC=F","GOLD","🥇"],["SI=F","SILVER","🥈"],["HG=F","COPPER","🥉"],["CL=F","WTI","🛢"]
+])
 lines += ["", "─── COMMODITIES ───"]
-for ticker, label, emoji in [("GC=F", "GOLD", "🥇"), ("SI=F", "SILVER", "🥈"), ("HG=F", "COPPER", "🥉"), ("CL=F", "WTI", "🛢")]:
+for item in comm_list:
+    ticker, label = item[0], item[1]
+    emoji = item[2] if len(item) > 2 else "📊"
     try:
         d   = get_price(ticker)
         cdc = analyze_cdc(ticker, "yahoo", "1D")
@@ -127,8 +152,9 @@ for ticker, label, emoji in [("GC=F", "GOLD", "🥇"), ("SI=F", "SILVER", "🥈"
         lines.append(f"⚠️ <b>{label}</b>  N/A")
 
 # Stocks US
+us_list = wl.get("stocks_us", ["AAPL","MSFT","TSLA","NVDA","AMZN","META","GOOG","PRCT","TGLS","IREN","VT","JEPQ"])
 lines += ["", "─── STOCKS US ───"]
-for sym in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "GOOG", "PRCT", "TGLS", "IREN", "VT", "JEPQ"]:
+for sym in us_list:
     try:
         d     = analyze_coin(sym, "nasdaq", "1D")
         sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
@@ -145,8 +171,9 @@ for sym in ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "GOOG", "PRCT", "TGL
         lines.append(f"⚠️ <b>{sym}</b>  N/A")
 
 # Stocks TH
+th_list = wl.get("stocks_th", ["SCB","KTB","BCPG"])
 lines += ["", "─── STOCKS TH ───"]
-for sym in ["SCB", "KTB", "BCPG"]:
+for sym in th_list:
     try:
         d     = analyze_coin(sym, "set", "1D")
         sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
@@ -166,11 +193,9 @@ send("\n".join(lines))
 print("Step 4 done")
 
 
-# ── STEP 5 — AI Deep Analysis (DeepSeek single-call, ~30s per symbol) ──────────
-
+# ── STEP 5 — AI Deep Analysis ─────────────────────────────────────────────────
 
 def deepseek_analyze(label: str, tv_sig: str, cdc_zone: str, combined: str, price_str: str) -> dict:
-    """Single DeepSeek API call via openai client — ~8s, returns BUY/SELL/HOLD with reasoning."""
     from openai import OpenAI
     client = OpenAI(
         api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
@@ -200,14 +225,19 @@ def deepseek_analyze(label: str, tv_sig: str, cdc_zone: str, combined: str, pric
     return json.loads(content)
 
 
-# Targets: (label, emoji, tv_exchange, tv_symbol, tv_tf, cdc_exchange)
-AI_TARGETS = [
-    ("AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"),
-    ("BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"),
-    ("GOLD", "🥇", None,      "GC=F",    "1D", "yahoo"),
-]
+AI_TARGETS = CFG.get("ai_targets", [
+    ["AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"],
+    ["BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"],
+    ["GOLD", "🥇", None,      "GC=F",    "1D", "yahoo"],
+])
 
-for lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
+for item in AI_TARGETS:
+    lbl, emo = item[0], item[1]
+    tv_ex    = item[2] if len(item) > 2 else None
+    tv_sym   = item[3] if len(item) > 3 else lbl
+    tv_tf    = item[4] if len(item) > 4 else "1D"
+    cdc_ex   = item[5] if len(item) > 5 else "yahoo"
+
     blk      = [f"{emo} <b>AI ANALYSIS — {lbl}</b>", ""]
     tv_sig   = "N/A"
     cdc_zone = "-"
@@ -246,41 +276,53 @@ for lbl, emo, tv_ex, tv_sym, tv_tf, cdc_ex in AI_TARGETS:
     send("\n".join(blk))
     print(f"Step 5 {lbl} done")
 
-print("All steps complete!")
 
-
-# ── STEP 6 — CDC Fresh Signal Scanner (DOW 30 + NASDAQ 100 + S&P 500) ─────────
+# ── STEP 6 — CDC Fresh Signal Scanner ────────────────────────────────────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_yahoo, scan_index_stocks, format_fresh_section,
+    scan_yahoo, scan_index_stocks, get_all_index_symbols, format_fresh_section,
+    DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
-send("🔍 <b>CDC Fresh Signal Scanner</b>\n⏳ กำลัง scan DOW 30 + NASDAQ 100 + S&P 500 รอสักครู่...")
+cdc_cfg = CFG.get("cdc_scanner", {})
+
+send("🔍 <b>CDC Fresh Signal Scanner (1D)</b>\n⏳ กำลัง scan รอสักครู่...")
 
 # Commodities
-COMM_TICKERS = [
-    ("GC=F", "GOLD",   "🥇"),
-    ("SI=F", "SILVER", "🥈"),
-    ("HG=F", "COPPER", "🥉"),
-    ("CL=F", "WTI",    "🛢"),
-]
-comm_fresh = scan_yahoo(COMM_TICKERS)
-send(format_fresh_section("🏅 CDC FRESH SIGNAL — COMMODITIES (1D)", comm_fresh))
+if cdc_cfg.get("commodities", True):
+    comm_tickers = [
+        (item[0], item[1], item[2] if len(item) > 2 else "📊")
+        for item in comm_list
+    ]
+    comm_fresh = scan_yahoo(comm_tickers)
+    send(format_fresh_section("🏅 CDC FRESH SIGNAL — COMMODITIES (1D)", comm_fresh))
 
-# Full US index scan — batch yfinance download (one HTTP call) + CDC detection
-us_fresh = scan_index_stocks()          # DOW 30 + NASDAQ 100 + S&P 500
-us_buy   = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
-us_sell  = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
+# Build stock universe based on config toggles
+universe: list[str] = []
+if cdc_cfg.get("dow30",    True):  universe += DOW_30
+if cdc_cfg.get("nasdaq100",True):  universe += NASDAQ_100
+if cdc_cfg.get("sp500",    True):  universe += SP_500_EXTRA
 
-send(format_fresh_section(
-    f"📈 CDC FRESH BUY — DOW/NASDAQ/S&P (1D)  ({len(us_buy)} ตัว)",
-    us_buy,
-    no_signal_text="ไม่มี fresh BUY signal วันนี้",
-))
+# Deduplicate
+universe = sorted(set(universe))
 
-send(format_fresh_section(
-    f"📉 CDC FRESH SELL — DOW/NASDAQ/S&P (1D)  ({len(us_sell)} ตัว)",
-    us_sell,
-    no_signal_text="ไม่มี fresh SELL signal วันนี้",
-))
+if universe:
+    us_fresh = scan_index_stocks(symbols=universe)
+    us_buy   = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
+    us_sell  = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
+
+    indices_on = [k for k in ["dow30","nasdaq100","sp500"] if cdc_cfg.get(k, True)]
+    lbl = "/".join({"dow30":"DOW","nasdaq100":"NASDAQ","sp500":"S&P"}.get(k,"") for k in indices_on)
+
+    send(format_fresh_section(
+        f"📈 CDC FRESH BUY — {lbl} (1D)  ({len(us_buy)} ตัว)",
+        us_buy,
+        no_signal_text="ไม่มี fresh BUY signal วันนี้",
+    ))
+    send(format_fresh_section(
+        f"📉 CDC FRESH SELL — {lbl} (1D)  ({len(us_sell)} ตัว)",
+        us_sell,
+        no_signal_text="ไม่มี fresh SELL signal วันนี้",
+    ))
 
 print("Step 6 done")
+print("All steps complete!")

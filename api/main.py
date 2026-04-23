@@ -1,14 +1,24 @@
 """
 TradingView MCP — FastAPI REST wrapper
 Exposes the core service functions as HTTP endpoints.
+Includes Web Admin UI, APScheduler for daily report, config management.
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import threading
+from collections import deque
+from pathlib import Path
+
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-import sys
-import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from tradingview_mcp.core.services.screener_service import (
@@ -24,10 +34,80 @@ from tradingview_mcp.core.services.news_service import fetch_news_summary
 from tradingview_mcp.core.services.yahoo_finance_service import get_price, get_market_snapshot
 from tradingview_mcp.core.utils.validators import sanitize_exchange, sanitize_timeframe
 
+# ── Paths ──────────────────────────────────────────────────────────────────────
+REPO_ROOT   = Path(__file__).parent.parent
+CONFIG_PATH = REPO_ROOT / "config.json"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "daily_report.py"
+ADMIN_HTML  = Path(__file__).parent / "admin.html"
+
+# ── Config helpers ─────────────────────────────────────────────────────────────
+
+def load_config() -> dict:
+    with open(CONFIG_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+def save_config(cfg: dict) -> None:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+# ── Run-log state ──────────────────────────────────────────────────────────────
+_run_log: deque[str] = deque(maxlen=500)
+_running  = False
+_run_lock = threading.Lock()
+
+def _do_run() -> None:
+    global _running
+    try:
+        env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+        proc = subprocess.Popen(
+            [sys.executable, str(SCRIPT_PATH)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        for line in proc.stdout:
+            _run_log.append(line.rstrip())
+        proc.wait()
+        _run_log.append(f"[exit code {proc.returncode}]")
+    except Exception as exc:
+        _run_log.append(f"[ERROR] {exc}")
+    finally:
+        _running = False
+
+def trigger_report() -> None:
+    global _running
+    with _run_lock:
+        if _running:
+            return
+        _running = True
+    _run_log.clear()
+    threading.Thread(target=_do_run, daemon=True).start()
+
+# ── Scheduler ──────────────────────────────────────────────────────────────────
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+scheduler = BackgroundScheduler()
+
+def _apply_schedule(cfg: dict) -> None:
+    sch = cfg.get("schedule", {})
+    hour   = int(sch.get("hour", 7))
+    minute = int(sch.get("minute", 0))
+    tz     = sch.get("timezone", "Asia/Bangkok")
+    scheduler.add_job(
+        trigger_report,
+        CronTrigger(hour=hour, minute=minute, timezone=tz),
+        id="daily_report",
+        replace_existing=True,
+    )
+
+# ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="TradingView MCP API",
-    description="REST API wrapper for TradingView MCP — screener, scanner, sentiment, news",
-    version="1.0.0",
+    description="REST API wrapper for TradingView MCP — screener, scanner, sentiment, news, admin",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -37,22 +117,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def startup() -> None:
+    cfg = load_config()
+    _apply_schedule(cfg)
+    scheduler.start()
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    scheduler.shutdown(wait=False)
+
+# ── Health ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+# ── Admin UI ───────────────────────────────────────────────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_ui():
+    return ADMIN_HTML.read_text(encoding="utf-8")
+
+# ── Config endpoints ───────────────────────────────────────────────────────────
+
+@app.get("/api/config")
+def get_config():
+    return load_config()
+
+@app.post("/api/config")
+def post_config(body: dict):
+    save_config(body)
+    _apply_schedule(body)
+    return {"ok": True}
+
+# ── Run / Log endpoints ────────────────────────────────────────────────────────
+
+@app.post("/api/run")
+def run_now():
+    if _running:
+        return {"ok": False, "message": "Already running"}
+    trigger_report()
+    return {"ok": True, "message": "Started"}
+
+@app.get("/api/run/status")
+def run_status():
+    return {
+        "running": _running,
+        "log": list(_run_log),
+    }
+
+# ── Schedule info ──────────────────────────────────────────────────────────────
+
+@app.get("/api/schedule")
+def schedule_info():
+    job = scheduler.get_job("daily_report")
+    nxt = str(job.next_run_time) if job else None
+    cfg = load_config().get("schedule", {})
+    return {"next_run": nxt, "schedule": cfg}
 
 # ── Screener ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/top-gainers")
 def top_gainers(
-    exchange: str = Query("KUCOIN", description="Exchange: KUCOIN, BINANCE, BYBIT, MEXC, NASDAQ, NYSE"),
-    timeframe: str = Query("15m", description="Timeframe: 5m, 15m, 1h, 4h, 1D"),
+    exchange: str = Query("KUCOIN"),
+    timeframe: str = Query("15m"),
     limit: int = Query(25, ge=1, le=50),
 ):
-    """Top gainers by Bollinger Band breakout."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
     rows = fetch_trending_analysis(exchange, timeframe=timeframe, limit=limit)
     return [
@@ -60,15 +192,13 @@ def top_gainers(
         for r in rows
     ]
 
-
 @app.get("/api/top-losers")
 def top_losers(
     exchange: str = Query("KUCOIN"),
     timeframe: str = Query("15m"),
     limit: int = Query(25, ge=1, le=50),
 ):
-    """Top losers — fetch all symbols and return the worst performers."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
     rows = fetch_trending_analysis(exchange, timeframe=timeframe, limit=500)
     losers = sorted(rows, key=lambda r: r["changePercent"])[:limit]
@@ -77,22 +207,18 @@ def top_losers(
         for r in losers
     ]
 
-
 @app.get("/api/coin/{symbol}")
 def coin_analysis(
     symbol: str,
     exchange: str = Query("KUCOIN"),
     timeframe: str = Query("1h"),
 ):
-    """Full technical analysis for a single coin."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "1h")
     try:
-        result = analyze_coin(symbol.upper(), exchange, timeframe)
-        return result
+        return analyze_coin(symbol.upper(), exchange, timeframe)
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
-
 
 # ── Scanner ───────────────────────────────────────────────────────────────────
 
@@ -102,11 +228,9 @@ def volume_breakout(
     timeframe: str = Query("1h"),
     limit: int = Query(20, ge=1, le=50),
 ):
-    """Scan for volume breakout signals."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "1h")
     return volume_breakout_scan(exchange, timeframe=timeframe, limit=limit)
-
 
 @app.get("/api/smart-volume")
 def smart_volume(
@@ -114,11 +238,9 @@ def smart_volume(
     timeframe: str = Query("1h"),
     limit: int = Query(20, ge=1, le=50),
 ):
-    """Smart volume scanner — unusual accumulation detection."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "1h")
     return smart_volume_scan(exchange, timeframe=timeframe, limit=limit)
-
 
 # ── Sentiment & News ──────────────────────────────────────────────────────────
 
@@ -127,30 +249,23 @@ def market_sentiment(
     exchange: str = Query("KUCOIN"),
     timeframe: str = Query("1h"),
 ):
-    """Overall market sentiment analysis."""
-    exchange = sanitize_exchange(exchange, "KUCOIN")
+    exchange  = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "1h")
     return analyze_sentiment(exchange, timeframe=timeframe)
 
-
 @app.get("/api/news")
 def financial_news(limit: int = Query(10, ge=1, le=50)):
-    """Latest financial/crypto news summary."""
     return fetch_news_summary(limit=limit)
-
 
 # ── Yahoo Finance ─────────────────────────────────────────────────────────────
 
 @app.get("/api/price/{ticker}")
 def yahoo_price(ticker: str):
-    """Get price from Yahoo Finance (stocks, ETFs, crypto)."""
     try:
         return get_price(ticker.upper())
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-
 @app.get("/api/market-snapshot")
 def market_snapshot():
-    """Macro market snapshot — BTC, Gold, S&P500, DXY."""
     return get_market_snapshot()
