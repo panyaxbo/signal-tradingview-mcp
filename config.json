@@ -9,16 +9,21 @@
       ["BTCUSDT", "BTC"],
       ["ETHUSDT", "ETH"],
       ["SOLUSDT", "SOL"],
-      ["XRPUSDT", "XRP"]
+      ["XRPUSDT", "XRP"],
+      ["OPUSDT",  "OP"]
     ],
     "commodities": [
-      ["GC=F", "GOLD", "🥇"],
+      ["GC=F", "GOLD",   "🥇"],
       ["SI=F", "SILVER", "🥈"],
       ["HG=F", "COPPER", "🥉"],
-      ["CL=F", "WTI", "🛢"]
+      ["CL=F", "WTI",    "🛢"]
     ],
-    "stocks_us": ["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "META", "GOOG", "PRCT", "TGLS", "IREN", "VT", "JEPQ"],
-    "stocks_th": ["SCB", "KTB", "BCPG"]
+    "stocks_us": [
+      "AAPL", "MSFT", "TSLA", "NVDA", "AMZN",
+      "META", "GOOG", "PRCT", "TGLS", "IREN",
+      "VT",   "JEPQ", "BABA", "CIFR", "JD", "SMCI"
+    ],
+    "stocks_th": ["SCB", "KTB", "KBANK", "ADVANC", "BCPG"]
   },
   "cdc_scanner": {
     "commodities": true,
@@ -27,7 +32,7 @@
     "sp500": true
   },
   "ai_targets": [
-    ["AAPL", "🍎", "nasdaq", "AAPL", "1D", "nasdaq"],
+    ["AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"],
     ["BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"],
     ["GOLD", "🥇", null,      "GC=F",    "1D", "yahoo"]
   ]
