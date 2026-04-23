@@ -194,6 +194,21 @@ def shutdown() -> None:
 def health():
     return {"status": "ok"}
 
+@app.get("/api/debug/paths")
+def debug_paths():
+    import os
+    return {
+        "cwd": os.getcwd(),
+        "repo_root": str(REPO_ROOT),
+        "config_default": str(CONFIG_DEFAULT),
+        "config_default_exists": CONFIG_DEFAULT.exists(),
+        "tmp_config_exists": Path("/tmp/config.json").exists(),
+        "data_config_exists": Path("/data/config.json").exists(),
+        "mem_config_empty": not bool(_MEM_CONFIG),
+        "env_var_set": bool(os.environ.get("REPORT_CONFIG_JSON")),
+        "loaded_config_keys": list(load_config().keys()),
+    }
+
 # ── Admin UI ───────────────────────────────────────────────────────────────────
 
 @app.get("/admin", response_class=HTMLResponse)
