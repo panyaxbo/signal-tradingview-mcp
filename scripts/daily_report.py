@@ -108,11 +108,16 @@ print("Step 3 done")
 
 
 # ── STEP 4 — Watchlist ────────────────────────────────────────────────────────
-from tradingview_mcp.core.services.screener_service import analyze_coin
-from tradingview_mcp.core.services.yahoo_finance_service import get_price
+# Use own Railway API endpoint → avoids TradingView rate-limit on Railway IP
 from tradingview_mcp.core.services.cdc_service import analyze_cdc
 
 wl = CFG.get("watchlist", {})
+
+def coin_via_api(sym: str, exchange: str, timeframe: str) -> dict:
+    """Fetch coin analysis via our own API (avoids direct TradingView rate-limit)."""
+    url = f"{BASE}/api/coin/{sym}?exchange={exchange}&timeframe={timeframe}"
+    d = fetch(url)
+    return d or {}
 
 lines = ["🎯 <b>WATCHLIST — TECHNICAL SIGNALS</b>", ""]
 
@@ -124,7 +129,7 @@ lines.append("─── CRYPTO ───")
 for item in crypto_list:
     sym, label = (item[0], item[1]) if isinstance(item, list) else (item, item)
     try:
-        d     = analyze_coin(sym, "binance", "1h")
+        d     = coin_via_api(sym, "binance", "1h")
         sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
         price = d.get("price_data", {}).get("current_price", 0)
         if not price:
@@ -147,9 +152,11 @@ for item in comm_list:
     ticker, label = item[0], item[1]
     emoji = item[2] if len(item) > 2 else "📊"
     try:
-        d   = get_price(ticker)
+        d   = fetch(f"{BASE}/api/price/{ticker}")
         cdc = analyze_cdc(ticker, "yahoo", "1D")
-        lines.append(f"{emoji} <b>{label}</b>  ${d['price']:,.2f}  ({d['change_pct']:+.2f}%)  |  {cdc['sig_emoji']}{cdc['signal']}")
+        price = d.get("price", 0) if d else 0
+        chg   = d.get("change_pct", 0) if d else 0
+        lines.append(f"{emoji} <b>{label}</b>  ${price:,.2f}  ({chg:+.2f}%)  |  {cdc['sig_emoji']}{cdc['signal']}")
     except Exception:
         lines.append(f"⚠️ <b>{label}</b>  N/A")
 
@@ -158,13 +165,12 @@ us_list = wl.get("stocks_us", ["AAPL","MSFT","TSLA","NVDA","AMZN","META","GOOG",
 lines += ["", "─── STOCKS US ───"]
 for sym in us_list:
     try:
-        d     = analyze_coin(sym, "nasdaq", "1D")
+        d     = coin_via_api(sym, "nasdaq", "1D")
         sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
         price = d.get("price_data", {}).get("current_price", 0)
         if not price:
-            import yfinance as yf
-            t = yf.Ticker(sym)
-            price = t.fast_info.get("lastPrice", 0) or t.fast_info.get("previousClose", 0)
+            pd = fetch(f"{BASE}/api/price/{sym}")
+            price = pd.get("price", 0) if pd else 0
         rsi   = d.get("rsi", {}).get("value", "N/A")
         rsi_s = f"{rsi:.1f}" if isinstance(rsi, float) else str(rsi)
         cdc   = analyze_cdc(sym, "nasdaq", "1D", sig)
@@ -177,13 +183,12 @@ th_list = wl.get("stocks_th", ["SCB","KTB","BCPG"])
 lines += ["", "─── STOCKS TH ───"]
 for sym in th_list:
     try:
-        d     = analyze_coin(sym, "set", "1D")
+        d     = coin_via_api(sym, "set", "1D")
         sig   = d.get("market_sentiment", {}).get("buy_sell_signal", "N/A")
         price = d.get("price_data", {}).get("current_price", 0)
         if not price:
-            import yfinance as yf
-            t = yf.Ticker(f"{sym}.BK")
-            price = t.fast_info.get("lastPrice", 0) or t.fast_info.get("previousClose", 0)
+            pd = fetch(f"{BASE}/api/price/{sym}.BK")
+            price = pd.get("price", 0) if pd else 0
         rsi   = d.get("rsi", {}).get("value", "N/A")
         rsi_s = f"{rsi:.1f}" if isinstance(rsi, float) else str(rsi)
         cdc   = analyze_cdc(sym, "set", "1D", sig)
