@@ -62,18 +62,31 @@ def _runtime_path() -> Path:
 
 # ── Config helpers ─────────────────────────────────────────────────────────────
 
+def _parse_env_config(raw: str) -> dict | None:
+    """Parse REPORT_CONFIG_JSON — handles both raw JSON and wrapped {REPORT_CONFIG_JSON: '...'}."""
+    try:
+        parsed = json.loads(raw)
+        # Handle case where user pasted the full API export response
+        if isinstance(parsed, dict) and list(parsed.keys()) == ["REPORT_CONFIG_JSON"]:
+            inner = parsed["REPORT_CONFIG_JSON"]
+            parsed = json.loads(inner) if isinstance(inner, str) else inner
+        if isinstance(parsed, dict) and "schedule" in parsed:
+            return parsed
+    except Exception:
+        pass
+    return None
+
 def load_config() -> dict:
-    # 1. In-memory override (saved during this process lifetime)
+    # 1. In-memory (current process, cleared on restart)
     if _MEM_CONFIG:
         return dict(_MEM_CONFIG)
-    # 2. REPORT_CONFIG_JSON env var (set in Railway Variables tab — persists across deploys)
+    # 2. REPORT_CONFIG_JSON env var (persists across Railway redeploys)
     env_raw = os.environ.get("REPORT_CONFIG_JSON", "")
     if env_raw:
-        try:
-            return json.loads(env_raw)
-        except Exception:
-            pass
-    # 3. /tmp file (survives restarts within same deployment)
+        parsed = _parse_env_config(env_raw)
+        if parsed:
+            return parsed
+    # 3. /tmp file
     for path in _PERSIST_PATHS:
         try:
             with open(path, encoding="utf-8") as f:
@@ -88,11 +101,50 @@ def load_config() -> dict:
         pass
     return {}
 
-def save_config(cfg: dict) -> None:
-    # Always update in-memory (instant, no file needed)
+def _railway_update_env(cfg_json: str) -> bool:
+    """Auto-update REPORT_CONFIG_JSON env var via Railway GraphQL API."""
+    import urllib.request as _ur
+    token      = os.environ.get("RAILWAY_API_TOKEN", "")
+    project_id = os.environ.get("RAILWAY_PROJECT_ID", "")
+    env_id     = os.environ.get("RAILWAY_ENVIRONMENT_ID", "")
+    service_id = os.environ.get("RAILWAY_SERVICE_ID", "")
+    if not all([token, project_id, env_id, service_id]):
+        return False
+    query = {
+        "query": """
+          mutation {
+            variableUpsert(input: {
+              projectId: %s
+              environmentId: %s
+              serviceId: %s
+              name: "REPORT_CONFIG_JSON"
+              value: %s
+            })
+          }
+        """ % (
+            json.dumps(project_id),
+            json.dumps(env_id),
+            json.dumps(service_id),
+            json.dumps(cfg_json),
+        )
+    }
+    req = _ur.Request(
+        "https://backboard.railway.app/graphql/v2",
+        data=json.dumps(query).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+    )
+    try:
+        resp = json.loads(_ur.urlopen(req, timeout=10).read())
+        return "errors" not in resp
+    except Exception:
+        return False
+
+def save_config(cfg: dict) -> bool:
+    """Save config. Returns True if Railway env var was also updated (persistent)."""
+    # 1. In-memory (instant)
     _MEM_CONFIG.clear()
     _MEM_CONFIG.update(cfg)
-    # Also save to /tmp for subprocess (daily_report.py reads the file)
+    # 2. /tmp for subprocess reads
     for path in _PERSIST_PATHS:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,12 +153,16 @@ def save_config(cfg: dict) -> None:
             break
         except Exception:
             pass
-    # Try git repo root (works locally)
+    # 3. Git repo root (local dev)
     try:
         with open(CONFIG_DEFAULT, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
+    # 4. Railway env var auto-update (persistent across redeploys)
+    cfg_json = json.dumps(cfg, ensure_ascii=False)
+    os.environ["REPORT_CONFIG_JSON"] = cfg_json  # update current process too
+    return _railway_update_env(cfg_json)
 
 # ── In-memory config (survives within same process, cleared on redeploy) ───────
 _MEM_CONFIG: dict = {}
@@ -223,13 +279,13 @@ def get_config():
 
 @app.post("/api/config")
 def post_config(body: dict[str, Any] = Body(...)):
-    save_config(body)
+    railway_ok = save_config(body)
     _apply_schedule(body)
     sch = body.get("schedule", {})
     return {
         "ok": True,
+        "persistent": railway_ok,   # True = auto-saved to Railway env var
         "schedule": f"{sch.get('hour',7):02d}:{sch.get('minute',0):02d} {sch.get('timezone','Asia/Bangkok')}",
-        "export_json": json.dumps(body, ensure_ascii=False),
     }
 
 @app.get("/api/config/export")

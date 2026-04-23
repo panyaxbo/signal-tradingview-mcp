@@ -400,18 +400,23 @@ async function saveConfig() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = '💾 กำลัง Save...';
   try {
-    await fetch('/api/config', {
+    const data = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
-    });
-    showToast('✅ บันทึกสำเร็จ — Schedule อัพเดตแล้ว', 'ok');
+    }).then(x => x.json());
+
+    if (data.persistent) {
+      showToast('✅ บันทึกสำเร็จ — sync Railway แล้ว 🔒', 'ok');
+      document.getElementById('persist-banner').style.display = 'none';
+    } else {
+      showToast('✅ บันทึกสำเร็จ (ต้อง set RAILWAY_API_TOKEN เพื่อ sync)', 'ok');
+      const banner = document.getElementById('persist-banner');
+      const ta = document.getElementById('copy-json');
+      banner.style.display = 'block';
+      ta.value = JSON.stringify(cfg);
+    }
     pollSchedule();
-    // Show persist banner with JSON to copy
-    const banner = document.getElementById('persist-banner');
-    const ta = document.getElementById('copy-json');
-    banner.style.display = 'block';
-    ta.value = JSON.stringify(cfg);
   } catch(e) {
     showToast('❌ Save failed: ' + e, 'err');
   } finally {
