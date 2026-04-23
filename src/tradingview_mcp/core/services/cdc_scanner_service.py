@@ -28,15 +28,16 @@ from tradingview_mcp.core.services.cdc_service import (
 # ── Index symbol lists ─────────────────────────────────────────────────────────
 
 DOW_30 = [
+    # WBA removed (Walgreens delisted from Dow, replaced by AMGEN/SHW)
     "AAPL", "AMGN", "AXP", "BA",  "CAT", "CRM", "CSCO","CVX",
-    "DIS",  "GS",   "HD",  "HON", "IBM", "INTC","JNJ", "JPM",
+    "DIS",  "GS",   "HD",  "HON", "IBM", "JNJ", "JPM",
     "KO",   "MCD",  "MMM", "MRK", "MSFT","NKE", "PG",  "SHW",
-    "TRV",  "UNH",  "V",   "VZ",  "WBA", "WMT",
+    "TRV",  "UNH",  "V",   "VZ",  "WMT",
 ]
 
 NASDAQ_100 = [
     "AAPL","ABNB","ADBE","ADI","ADP","ADSK","AEP","AMAT","AMD","AMGN",
-    "AMZN","ANSS","ARM","ASML","AVGO","AXON","AZN","BIIB","BKNG","BKR",
+    "AMZN","ARM","ASML","AVGO","AXON","AZN","BIIB","BKNG","BKR",
     "CCEP","CDNS","CDW","CEG","CHTR","CMCSA","COST","CPRT","CRWD","CSCO",
     "CSGP","CSX","CTAS","CTSH","DASH","DDOG","DLTR","DXCM","EA","EXC",
     "FANG","FAST","FTNT","GEHC","GFS","GILD","GOOG","GOOGL","HON","IDXX",
