@@ -146,6 +146,35 @@
   .toast.ok   { border-color: var(--green); color: var(--green); }
   .toast.err  { border-color: var(--red);   color: var(--red);   }
 
+  /* Alert rows */
+  .alert-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    transition: opacity .2s;
+  }
+  .alert-row.inactive { opacity: 0.45; }
+  .alert-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 20px; white-space: nowrap;
+  }
+  .alert-badge.on  { background: rgba(0,211,149,.15); color: var(--green); }
+  .alert-badge.off { background: rgba(107,114,128,.15); color: var(--muted); }
+  .alert-form {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px; margin-bottom: 14px;
+  }
+  .alert-form .field select,
+  .alert-form .field input { width: 100%; }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+    transition: all .15s; white-space: nowrap;
+  }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .icon-btn.del { border-color: transparent; color: var(--muted); }
+  .icon-btn.del:hover { border-color: var(--red); color: var(--red); background: rgba(255,107,107,.08); }
+
   @media (max-width: 800px) {
     .layout { grid-template-columns: 1fr; }
     .sidebar { border-left: none; border-top: 1px solid var(--border); }
@@ -231,6 +260,72 @@
       <div id="ai-targets"></div>
       <button class="add-btn" onclick="addAiRow()">+ เพิ่ม symbol</button>
       <div style="font-size:11px;color:var(--muted);margin-top:8px">Label · Emoji · Exchange (nasdaq/binance/yahoo) · Symbol · TF · CDC exchange</div>
+    </div>
+
+    <!-- Alerts -->
+    <div class="card">
+      <div class="card-title">🔔 Real-time Price Alerts <span style="font-size:11px;font-weight:400;color:var(--muted)">(เช็คทุก 10 นาที)</span></div>
+
+      <!-- Add alert form -->
+      <div class="alert-form">
+        <div class="field">
+          <label>ชื่อ Alert</label>
+          <input type="text" id="al-name" placeholder="NVDA breakout">
+        </div>
+        <div class="field">
+          <label>Symbol</label>
+          <input type="text" id="al-sym" placeholder="NVDA" style="text-transform:uppercase">
+        </div>
+        <div class="field">
+          <label>Exchange</label>
+          <select id="al-exc">
+            <option value="nasdaq">NASDAQ</option>
+            <option value="binance">Binance (Crypto)</option>
+            <option value="yahoo">Yahoo (Commodity)</option>
+            <option value="set">SET (TH)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Timeframe</label>
+          <select id="al-tf">
+            <option value="1D">1D</option>
+            <option value="1h">1H</option>
+            <option value="4h">4H</option>
+            <option value="15m">15m</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>ประเภท</label>
+          <select id="al-type" onchange="onAlertTypeChange()">
+            <option value="price_above">💰 ราคา ≥ ค่า</option>
+            <option value="price_below">💰 ราคา ≤ ค่า</option>
+            <option value="rsi_above">📊 RSI ≥ ค่า</option>
+            <option value="rsi_below">📊 RSI ≤ ค่า</option>
+            <option value="cdc_change">🔄 CDC Zone เปลี่ยน</option>
+          </select>
+        </div>
+        <div class="field" id="al-val-wrap">
+          <label>ค่า</label>
+          <input type="number" id="al-val" placeholder="200.00" step="any">
+        </div>
+        <div class="field">
+          <label>แจ้งซ้ำ</label>
+          <select id="al-repeat" onchange="onAlertTypeChange()">
+            <option value="false">ครั้งเดียว</option>
+            <option value="true">ซ้ำ (Cooldown)</option>
+          </select>
+        </div>
+        <div class="field" id="al-cd-wrap" style="display:none">
+          <label>Cooldown (ชม.)</label>
+          <input type="number" id="al-cd" value="4" min="1" max="168">
+        </div>
+      </div>
+      <button class="add-btn" style="background:rgba(0,211,149,.1);border-color:var(--green);color:var(--green);padding:8px 18px;font-size:13px" onclick="addAlert()">+ เพิ่ม Alert</button>
+
+      <!-- Alert list -->
+      <div id="alert-list" style="margin-top:16px">
+        <div style="color:var(--muted);font-size:13px">กำลังโหลด...</div>
+      </div>
     </div>
 
   </div>
@@ -500,8 +595,104 @@ function showToast(msg, type) {
   setTimeout(() => t.className = 'toast', 3000);
 }
 
+// ── Alerts ─────────────────────────────────────────────────────────────────────
+let alertList = [];
+
+async function loadAlerts() {
+  alertList = await fetch('/api/alerts').then(r => r.json()).catch(() => []);
+  renderAlerts();
+}
+
+const TYPE_LABEL = {
+  price_above: '💰≥', price_below: '💰≤',
+  rsi_above:   '📊≥', rsi_below:   '📊≤',
+  cdc_change:  '🔄CDC',
+};
+
+function renderAlerts() {
+  const wrap = document.getElementById('alert-list');
+  if (!alertList.length) {
+    wrap.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:4px 0">ยังไม่มี Alert — เพิ่มได้เลย</div>';
+    return;
+  }
+  wrap.innerHTML = alertList.map(a => {
+    const valStr = (a.type !== 'cdc_change' && a.value != null) ? ' ' + a.value : '';
+    const fired  = a.last_fired
+      ? '<div style="font-size:10px;color:var(--muted);margin-top:3px">⏰ fired: '
+        + new Date(a.last_fired + 'Z').toLocaleString('th-TH', {timeZone:'Asia/Bangkok'}) + '</div>'
+      : '';
+    return `
+    <div class="alert-row ${a.active ? '' : 'inactive'}" id="alrow-${a.id}">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">${esc(a.name || a.symbol)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          ${esc(a.symbol)} · ${esc(a.exchange)} · ${esc(a.timeframe)} ·
+          ${TYPE_LABEL[a.type] || a.type}${esc(valStr)}
+          ${a.repeat ? ' · 🔁 ' + a.cooldown_hours + 'ชม.' : ' · 1×'}
+        </div>
+        ${fired}
+      </div>
+      <span class="alert-badge ${a.active ? 'on' : 'off'}">${a.active ? 'ON' : 'OFF'}</span>
+      <button class="icon-btn" onclick="toggleAlert('${a.id}')" title="${a.active ? 'ปิด' : 'เปิด'}">${a.active ? '⏸' : '▶️'}</button>
+      <button class="icon-btn del" onclick="deleteAlert('${a.id}')" title="ลบ">🗑</button>
+    </div>`;
+  }).join('');
+}
+
+function onAlertTypeChange() {
+  const type   = document.getElementById('al-type').value;
+  const repeat = document.getElementById('al-repeat').value;
+  document.getElementById('al-val-wrap').style.display = type === 'cdc_change' ? 'none' : '';
+  document.getElementById('al-cd-wrap').style.display  = repeat === 'true' ? '' : 'none';
+}
+
+async function addAlert() {
+  const sym = document.getElementById('al-sym').value.trim().toUpperCase();
+  if (!sym) { showToast('❌ กรุณาระบุ Symbol', 'err'); return; }
+  const type   = document.getElementById('al-type').value;
+  const repeat = document.getElementById('al-repeat').value === 'true';
+  const body   = {
+    name:          document.getElementById('al-name').value.trim() || sym,
+    symbol:        sym,
+    exchange:      document.getElementById('al-exc').value,
+    timeframe:     document.getElementById('al-tf').value,
+    type:          type,
+    value:         type !== 'cdc_change' ? (parseFloat(document.getElementById('al-val').value) || 0) : null,
+    repeat:        repeat,
+    cooldown_hours: repeat ? (parseInt(document.getElementById('al-cd').value) || 4) : 4,
+    active:        true,
+  };
+  const r = await fetch('/api/alerts', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+  }).then(x => x.json()).catch(() => null);
+  if (r && r.id) {
+    alertList.unshift(r);
+    renderAlerts();
+    document.getElementById('al-name').value = '';
+    document.getElementById('al-sym').value  = '';
+    document.getElementById('al-val').value  = '';
+    showToast('✅ เพิ่ม Alert แล้ว', 'ok');
+  } else {
+    showToast('❌ เพิ่มไม่สำเร็จ', 'err');
+  }
+}
+
+async function deleteAlert(id) {
+  await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+  alertList = alertList.filter(a => a.id !== id);
+  renderAlerts();
+  showToast('🗑 ลบ Alert แล้ว', 'ok');
+}
+
+async function toggleAlert(id) {
+  const r = await fetch(`/api/alerts/${id}/toggle`, { method: 'PATCH' }).then(x => x.json());
+  const a = alertList.find(x => x.id === id);
+  if (a) { a.active = r.active; renderAlerts(); }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────────
 init();
+loadAlerts();
 setInterval(pollSchedule, 30000);
 startLogPoll();
 </script>

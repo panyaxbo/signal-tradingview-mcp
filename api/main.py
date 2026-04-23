@@ -10,7 +10,10 @@ import os
 import subprocess
 import sys
 import threading
+import uuid
+import urllib.request
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Query, HTTPException, Body
@@ -208,6 +211,116 @@ from apscheduler.triggers.cron import CronTrigger
 
 scheduler = BackgroundScheduler()
 
+# ── Alert engine ───────────────────────────────────────────────────────────────
+
+BASE_URL = "https://signal-tradingview-mcp.up.railway.app"
+BOT      = "8720452318:AAGgh2WXUW6JFw_Z71eMUBZ0bi-n5eHnwuE"
+CHAT     = "5636156156"
+
+_prev_zones: dict[str, str] = {}   # track CDC zone changes
+
+def _tg_send(msg: str) -> None:
+    payload = json.dumps({"chat_id": CHAT, "text": msg, "parse_mode": "HTML"}).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{BOT}/sendMessage",
+        data=payload, headers={"Content-Type": "application/json"},
+    )
+    try: urllib.request.urlopen(req, timeout=10)
+    except Exception: pass
+
+def _api_fetch(url: str) -> dict:
+    try:
+        return json.loads(urllib.request.urlopen(url, timeout=12).read())
+    except Exception:
+        return {}
+
+def _eval_alert(alert: dict) -> tuple[bool, str]:
+    sym   = alert["symbol"].upper()
+    exc   = alert.get("exchange", "nasdaq").lower()
+    tf    = alert.get("timeframe", "1D")
+    atype = alert["type"]
+    val   = float(alert.get("value", 0))
+    name  = alert.get("name", sym)
+
+    price = rsi = zone = sig = None
+
+    if exc == "yahoo":
+        d     = _api_fetch(f"{BASE_URL}/api/price/{sym}")
+        price = d.get("price", 0)
+    else:
+        d     = _api_fetch(f"{BASE_URL}/api/coin/{sym}?exchange={exc}&timeframe={tf}")
+        price = (d.get("price_data") or {}).get("current_price", 0)
+        rsi   = (d.get("rsi") or {}).get("value")
+        sig   = (d.get("market_sentiment") or {}).get("buy_sell_signal")
+
+    # ── Evaluate condition ─────────────────────────────────────────────────────
+    if atype == "price_above":
+        ok  = bool(price and price >= val)
+        msg = f"🔔 <b>Alert: {name}</b>\n💰 <b>{sym}</b> ${price:,.2f} ≥ ${val:,.2f} 🚀\n📈 ราคาแตะเป้าแล้ว!"
+    elif atype == "price_below":
+        ok  = bool(price and price <= val)
+        msg = f"🔔 <b>Alert: {name}</b>\n💰 <b>{sym}</b> ${price:,.2f} ≤ ${val:,.2f} ⚠️\n📉 ราคาลงถึงเป้าแล้ว!"
+    elif atype == "rsi_above":
+        ok  = rsi is not None and rsi >= val
+        msg = f"🔔 <b>Alert: {name}</b>\n📊 <b>{sym}</b> RSI {rsi:.1f} ≥ {val:.0f}\n🔴 Overbought — ระวังการ reverse!"
+    elif atype == "rsi_below":
+        ok  = rsi is not None and rsi <= val
+        msg = f"🔔 <b>Alert: {name}</b>\n📊 <b>{sym}</b> RSI {rsi:.1f} ≤ {val:.0f}\n🟢 Oversold — อาจเป็นจังหวะซื้อ!"
+    elif atype == "cdc_change":
+        from tradingview_mcp.core.services.cdc_service import analyze_cdc
+        cdc_r = analyze_cdc(sym, exc, tf, sig)
+        zone  = cdc_r.get("cdc_zone", "")
+        key   = f"{sym}_{exc}_{tf}"
+        prev  = _prev_zones.get(key, "")
+        _prev_zones[key] = zone
+        ok    = bool(prev) and prev != zone
+        emo   = cdc_r.get("cdc_emoji", "🔄")
+        msg   = (f"🔔 <b>Alert: {name}</b>\n"
+                 f"{emo} <b>{sym}</b> CDC Zone เปลี่ยน!\n"
+                 f"📌 {prev} → <b>{zone}</b>")
+    else:
+        return False, ""
+
+    return ok, msg
+
+def check_alerts() -> None:
+    """Called by APScheduler every 10 minutes."""
+    cfg     = load_config()
+    alerts  = cfg.get("alerts", [])
+    changed = False
+
+    for alert in alerts:
+        if not alert.get("active", True):
+            continue
+
+        last_fired = alert.get("last_fired")
+        repeat     = alert.get("repeat", False)
+        cooldown_h = float(alert.get("cooldown_hours", 4))
+
+        # Skip if one-time already fired
+        if last_fired and not repeat:
+            continue
+        # Skip if repeat but still in cooldown
+        if last_fired and repeat:
+            fired_dt = datetime.fromisoformat(last_fired)
+            if datetime.utcnow() - fired_dt < timedelta(hours=cooldown_h):
+                continue
+
+        try:
+            triggered, msg = _eval_alert(alert)
+        except Exception:
+            continue
+
+        if triggered:
+            _tg_send(msg)
+            alert["last_fired"] = datetime.utcnow().isoformat()
+            if not repeat:
+                alert["active"] = False
+            changed = True
+
+    if changed:
+        save_config(cfg)
+
 def _apply_schedule(cfg: dict) -> None:
     sch = cfg.get("schedule", {})
     hour   = int(sch.get("hour", 7))
@@ -217,6 +330,14 @@ def _apply_schedule(cfg: dict) -> None:
         trigger_report,
         CronTrigger(hour=hour, minute=minute, timezone=tz),
         id="daily_report",
+        replace_existing=True,
+    )
+    # Alert checker — every 10 minutes, 24/7
+    scheduler.add_job(
+        check_alerts,
+        "interval",
+        minutes=10,
+        id="alert_checker",
         replace_existing=True,
     )
 
@@ -412,3 +533,43 @@ def yahoo_price(ticker: str):
 @app.get("/api/market-snapshot")
 def market_snapshot():
     return get_market_snapshot()
+
+# ── Alert CRUD endpoints ───────────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+def list_alerts():
+    return load_config().get("alerts", [])
+
+@app.post("/api/alerts")
+def create_alert(body: dict[str, Any] = Body(...)):
+    cfg    = load_config()
+    alerts = cfg.setdefault("alerts", [])
+    body.setdefault("id",             str(uuid.uuid4())[:8])
+    body.setdefault("active",         True)
+    body.setdefault("last_fired",     None)
+    body.setdefault("repeat",         False)
+    body.setdefault("cooldown_hours", 4)
+    alerts.append(body)
+    save_config(cfg)
+    return body
+
+@app.delete("/api/alerts/{alert_id}")
+def delete_alert(alert_id: str):
+    cfg    = load_config()
+    alerts = cfg.get("alerts", [])
+    before = len(alerts)
+    cfg["alerts"] = [a for a in alerts if a.get("id") != alert_id]
+    if len(cfg["alerts"]) == before:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    save_config(cfg)
+    return {"ok": True}
+
+@app.patch("/api/alerts/{alert_id}/toggle")
+def toggle_alert(alert_id: str):
+    cfg = load_config()
+    for a in cfg.get("alerts", []):
+        if a.get("id") == alert_id:
+            a["active"] = not a.get("active", True)
+            save_config(cfg)
+            return {"id": alert_id, "active": a["active"]}
+    raise HTTPException(status_code=404, detail="Alert not found")

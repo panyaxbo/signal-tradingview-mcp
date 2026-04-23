@@ -35,5 +35,6 @@
     ["AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"],
     ["BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"],
     ["GOLD", "🥇", null,      "GC=F",    "1D", "yahoo"]
-  ]
+  ],
+  "alerts": []
 }
