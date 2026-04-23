@@ -19,6 +19,8 @@ import os
 import re
 import sys
 import urllib.request
+import warnings
+warnings.filterwarnings("ignore")   # suppress tradingview_ta interval warnings
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
