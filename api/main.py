@@ -63,24 +63,53 @@ def _runtime_path() -> Path:
 # ── Config helpers ─────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    for path in _PERSIST_PATHS + [CONFIG_DEFAULT]:
+    # 1. In-memory override (saved during this process lifetime)
+    if _MEM_CONFIG:
+        return dict(_MEM_CONFIG)
+    # 2. REPORT_CONFIG_JSON env var (set in Railway Variables tab — persists across deploys)
+    env_raw = os.environ.get("REPORT_CONFIG_JSON", "")
+    if env_raw:
+        try:
+            return json.loads(env_raw)
+        except Exception:
+            pass
+    # 3. /tmp file (survives restarts within same deployment)
+    for path in _PERSIST_PATHS:
         try:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass
+    # 4. git default
+    try:
+        with open(CONFIG_DEFAULT, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        pass
     return {}
 
 def save_config(cfg: dict) -> None:
-    p = _runtime_path()
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-    # Also try git repo root (works on local dev)
+    # Always update in-memory (instant, no file needed)
+    _MEM_CONFIG.clear()
+    _MEM_CONFIG.update(cfg)
+    # Also save to /tmp for subprocess (daily_report.py reads the file)
+    for path in _PERSIST_PATHS:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            break
+        except Exception:
+            pass
+    # Try git repo root (works locally)
     try:
         with open(CONFIG_DEFAULT, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
+
+# ── In-memory config (survives within same process, cleared on redeploy) ───────
+_MEM_CONFIG: dict = {}
 
 # ── Run-log state ──────────────────────────────────────────────────────────────
 _run_log: deque[str] = deque(maxlen=500)
@@ -185,7 +214,14 @@ def post_config(body: dict[str, Any] = Body(...)):
     return {
         "ok": True,
         "schedule": f"{sch.get('hour',7):02d}:{sch.get('minute',0):02d} {sch.get('timezone','Asia/Bangkok')}",
+        "export_json": json.dumps(body, ensure_ascii=False),
     }
+
+@app.get("/api/config/export")
+def export_config():
+    """Return config as minified JSON string — paste into Railway Variables."""
+    cfg = load_config()
+    return {"REPORT_CONFIG_JSON": json.dumps(cfg, ensure_ascii=False)}
 
 # ── Run / Log endpoints ────────────────────────────────────────────────────────
 

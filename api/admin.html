@@ -125,6 +125,17 @@
   .log-console .log-step  { color: var(--accent); font-weight: bold; }
   .log-console .log-done  { color: var(--green); font-weight: bold; }
 
+  .persist-banner {
+    background: rgba(251,191,36,.08); border: 1px solid var(--yellow);
+    border-radius: 10px; padding: 14px 16px; font-size: 12px; line-height: 1.6;
+    display: none;
+  }
+  .persist-banner b { color: var(--yellow); }
+  .copy-json {
+    margin-top: 8px; width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: #a3e635; font-family: monospace; font-size: 10px; border-radius: 6px;
+    padding: 6px 8px; resize: none; height: 60px; cursor: pointer;
+  }
   .toast {
     position: fixed; bottom: 24px; right: 24px; background: var(--card);
     border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px;
@@ -234,6 +245,14 @@
 
     <button class="btn btn-save" id="btn-save" onclick="saveConfig()">💾 Save Config</button>
     <button class="btn btn-run"  id="btn-run"  onclick="runNow()">▶️ Run Now</button>
+
+    <div class="persist-banner" id="persist-banner">
+      <b>⚠️ Config จะหายตอน Railway Redeploy!</b><br>
+      คัดลอก JSON นี้ไปวางใน<br>
+      <b>Railway → Variables → REPORT_CONFIG_JSON</b><br>
+      แล้ว config จะคงอยู่ถาวร ✅
+      <textarea class="copy-json" id="copy-json" readonly onclick="this.select()"></textarea>
+    </div>
 
     <div style="font-size:12px;color:var(--muted);font-weight:600;margin-top:4px">📋 Live Log</div>
     <div class="log-console" id="log-console">รอ log...</div>
@@ -388,6 +407,11 @@ async function saveConfig() {
     });
     showToast('✅ บันทึกสำเร็จ — Schedule อัพเดตแล้ว', 'ok');
     pollSchedule();
+    // Show persist banner with JSON to copy
+    const banner = document.getElementById('persist-banner');
+    const ta = document.getElementById('copy-json');
+    banner.style.display = 'block';
+    ta.value = JSON.stringify(cfg);
   } catch(e) {
     showToast('❌ Save failed: ' + e, 'err');
   } finally {
