@@ -13,11 +13,10 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
+from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -35,20 +34,34 @@ from tradingview_mcp.core.services.yahoo_finance_service import get_price, get_m
 from tradingview_mcp.core.utils.validators import sanitize_exchange, sanitize_timeframe
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-REPO_ROOT   = Path(__file__).parent.parent
-CONFIG_PATH = REPO_ROOT / "config.json"
-SCRIPT_PATH = REPO_ROOT / "scripts" / "daily_report.py"
-ADMIN_HTML  = Path(__file__).parent / "admin.html"
+REPO_ROOT      = Path(__file__).parent.parent
+CONFIG_DEFAULT = REPO_ROOT / "config.json"       # git default (read-only on Railway)
+CONFIG_RUNTIME = Path("/tmp/report_config.json") # persists within deployment
+SCRIPT_PATH    = REPO_ROOT / "scripts" / "daily_report.py"
+ADMIN_HTML     = Path(__file__).parent / "admin.html"
 
 # ── Config helpers ─────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    # Prefer runtime config (user edits) over git default
+    for path in [CONFIG_RUNTIME, CONFIG_DEFAULT]:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 def save_config(cfg: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    # Save to /tmp so it survives within this deployment
+    with open(CONFIG_RUNTIME, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+    # Also try to write back to repo root (works locally, read-only on Railway)
+    try:
+        with open(CONFIG_DEFAULT, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 # ── Run-log state ──────────────────────────────────────────────────────────────
 _run_log: deque[str] = deque(maxlen=500)
@@ -146,10 +159,14 @@ def get_config():
     return load_config()
 
 @app.post("/api/config")
-def post_config(body: dict):
+def post_config(body: dict[str, Any] = Body(...)):
     save_config(body)
     _apply_schedule(body)
-    return {"ok": True}
+    sch = body.get("schedule", {})
+    return {
+        "ok": True,
+        "schedule": f"{sch.get('hour',7):02d}:{sch.get('minute',0):02d} {sch.get('timezone','Asia/Bangkok')}",
+    }
 
 # ── Run / Log endpoints ────────────────────────────────────────────────────────
 
