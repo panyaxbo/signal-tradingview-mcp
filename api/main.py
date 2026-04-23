@@ -35,16 +35,35 @@ from tradingview_mcp.core.utils.validators import sanitize_exchange, sanitize_ti
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 REPO_ROOT      = Path(__file__).parent.parent
-CONFIG_DEFAULT = REPO_ROOT / "config.json"       # git default (read-only on Railway)
-CONFIG_RUNTIME = Path("/tmp/report_config.json") # persists within deployment
+CONFIG_DEFAULT = REPO_ROOT / "config.json"       # git default (fallback)
 SCRIPT_PATH    = REPO_ROOT / "scripts" / "daily_report.py"
 ADMIN_HTML     = Path(__file__).parent / "admin.html"
+
+# Persistent config priority (first writable wins):
+#   1. /data/config.json  → Railway Volume  (add volume at /data in Railway dashboard)
+#   2. /tmp/config.json   → survives restarts within same deployment (wiped on redeploy)
+#   3. config.json        → git default (read-only on Railway, used as seed)
+_PERSIST_PATHS = [
+    Path("/data/config.json"),
+    Path("/tmp/config.json"),
+]
+
+def _runtime_path() -> Path:
+    """Return first writable persistent path."""
+    for p in _PERSIST_PATHS:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # test write
+            p.write_text(p.read_text() if p.exists() else "test")
+            return p
+        except Exception:
+            pass
+    return Path("/tmp/config.json")  # last resort
 
 # ── Config helpers ─────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    # Prefer runtime config (user edits) over git default
-    for path in [CONFIG_RUNTIME, CONFIG_DEFAULT]:
+    for path in _PERSIST_PATHS + [CONFIG_DEFAULT]:
         try:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
@@ -53,10 +72,10 @@ def load_config() -> dict:
     return {}
 
 def save_config(cfg: dict) -> None:
-    # Save to /tmp so it survives within this deployment
-    with open(CONFIG_RUNTIME, "w", encoding="utf-8") as f:
+    p = _runtime_path()
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
-    # Also try to write back to repo root (works locally, read-only on Railway)
+    # Also try git repo root (works on local dev)
     try:
         with open(CONFIG_DEFAULT, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
