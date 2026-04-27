@@ -301,10 +301,10 @@ if cdc_cfg.get("wave12", True):
     if cdc_cfg.get("sp500",     True): w12_universe += SP_500_EXTRA
     w12_universe = sorted(set(w12_universe))
 
+    w12_results: list = []
     if w12_universe:
         w12_results = scan_wave12_setups(symbols=w12_universe, period="1y")
 
-        # Split by CDC status for readability
         w12_ready = [r for r in w12_results if r["cdc_status"] in ("fresh_cross", "just_crossed")]
         w12_watch = [r for r in w12_results if r["cdc_status"] in ("watch", "bullish")]
 
@@ -328,9 +328,9 @@ if cdc_cfg.get("wave12", True):
         )
         try:
             res = json.loads(urllib.request.urlopen(req, timeout=15).read())
-            print(f"Step 7: watchlist synced — +{res.get('added',0)} new, {res.get('total_watching',0)} watching")
+            print(f"Step 6: watchlist synced — +{res.get('added',0)} new, {res.get('total_watching',0)} watching")
         except Exception as e:
-            print(f"Step 7: watchlist sync warning: {e}")
+            print(f"Step 6: watchlist sync warning: {e}")
 
 print("Step 6 done")
 print("All steps complete!")
