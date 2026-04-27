@@ -37,5 +37,6 @@
     ["BTC",  "₿",  "binance", "BTCUSDT", "1h", "binance"],
     ["GOLD", "🥇", null,      "GC=F",    "1D", "yahoo"]
   ],
-  "alerts": []
+  "alerts": [],
+  "wave12_watchlist": []
 }

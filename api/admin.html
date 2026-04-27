@@ -175,6 +175,32 @@
   .icon-btn.del { border-color: transparent; color: var(--muted); }
   .icon-btn.del:hover { border-color: var(--red); color: var(--red); background: rgba(255,107,107,.08); }
 
+  /* Wave 1→2 watchlist */
+  .wl-row {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    transition: opacity .2s;
+  }
+  .wl-row.invalid  { border-color: var(--red);    opacity: .6; }
+  .wl-row.confirmed{ border-color: var(--green);  }
+  .wl-row.expired  { opacity: .4; }
+  .wl-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 20px; white-space: nowrap;
+  }
+  .wl-badge.watching  { background: rgba(251,191,36,.15);  color: var(--yellow); }
+  .wl-badge.confirmed { background: rgba(0,211,149,.15);   color: var(--green);  }
+  .wl-badge.invalid   { background: rgba(255,107,107,.15); color: var(--red);    }
+  .wl-badge.expired   { background: rgba(107,114,128,.15); color: var(--muted);  }
+  .wl-fib { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .wl-cdc-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 4px;
+  }
+  .cdc-watch    { background: var(--muted); }
+  .cdc-bullish  { background: var(--yellow); }
+  .cdc-cross    { background: var(--green); }
+
   @media (max-width: 800px) {
     .layout { grid-template-columns: 1fr; }
     .sidebar { border-left: none; border-top: 1px solid var(--border); }
@@ -325,6 +351,22 @@
 
       <!-- Alert list -->
       <div id="alert-list" style="margin-top:16px">
+        <div style="color:var(--muted);font-size:13px">กำลังโหลด...</div>
+      </div>
+    </div>
+
+    <!-- Wave 1→2 Watchlist -->
+    <div class="card">
+      <div class="card-title">📐 Wave 1→2 Watchlist
+        <span style="font-size:11px;font-weight:400;color:var(--muted)">(อัปเดตทุกเช้า · แจ้งเมื่อ invalid/confirm)</span>
+        <button class="icon-btn" style="margin-left:auto;font-size:12px" onclick="loadWatchlist()">🔄 Refresh</button>
+      </div>
+
+      <!-- Summary pills -->
+      <div id="wl-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+
+      <!-- Watchlist items -->
+      <div id="wl-list">
         <div style="color:var(--muted);font-size:13px">กำลังโหลด...</div>
       </div>
     </div>
@@ -691,10 +733,92 @@ async function toggleAlert(id) {
   if (a) { a.active = r.active; renderAlerts(); }
 }
 
+// ── Wave 1→2 Watchlist ─────────────────────────────────────────────────────────
+let wlItems = [];
+
+async function loadWatchlist() {
+  wlItems = await fetch('/api/wave12-watchlist').then(r => r.json()).catch(() => []);
+  renderWatchlist();
+}
+
+function renderWatchlist() {
+  const summary = document.getElementById('wl-summary');
+  const wrap    = document.getElementById('wl-list');
+
+  const counts = { watching: 0, confirmed: 0, invalid: 0, expired: 0 };
+  wlItems.forEach(w => { if (counts[w.status] !== undefined) counts[w.status]++; });
+
+  summary.innerHTML = [
+    ['watching',  '⏳', counts.watching,  'var(--yellow)'],
+    ['confirmed', '✅', counts.confirmed, 'var(--green)'],
+    ['invalid',   '❌', counts.invalid,   'var(--red)'],
+    ['expired',   '⌛', counts.expired,   'var(--muted)'],
+  ].filter(([,,n]) => n > 0).map(([s, e, n, c]) =>
+    `<span style="background:rgba(255,255,255,.05);border:1px solid ${c};color:${c};border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700">${e} ${s}: ${n}</span>`
+  ).join('');
+
+  if (!wlItems.length) {
+    wrap.innerHTML = '<div style="color:var(--muted);font-size:13px">ยังไม่มีรายการ — Scanner จะเพิ่มทุกเช้าหลัง Run</div>';
+    return;
+  }
+
+  const CDC_DOT = {
+    watch:        '<span class="wl-cdc-dot cdc-watch"></span>รอ CDC cross',
+    bullish:      '<span class="wl-cdc-dot cdc-bullish"></span>CDC bullish',
+    fresh_cross:  '<span class="wl-cdc-dot cdc-cross"></span>CDC fresh cross 🆕',
+    just_crossed: '<span class="wl-cdc-dot cdc-cross"></span>CDC cross candle 2',
+  };
+
+  // Sort: watching first, then confirmed, then others
+  const order = { watching: 0, confirmed: 1, invalid: 2, expired: 3 };
+  const sorted = [...wlItems].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+
+  wrap.innerHTML = sorted.map(w => {
+    const cdcLabel = CDC_DOT[w.cdc_status] || w.cdc_status;
+    const retrace  = w.retrace_pct ? `W2: ${w.retrace_pct}% ${w.fib_label || ''}` : '';
+    const daysSince = w.added_date
+      ? Math.floor((Date.now() - new Date(w.added_date)) / 86400000) + 'd'
+      : '';
+    return `
+    <div class="wl-row ${w.status}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px">${esc(w.ticker)}
+            <span style="font-size:12px;color:var(--muted);font-weight:400;margin-left:6px">$${(+w.current_price||+w.w1_peak).toFixed(2)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">
+            📉 -${w.downtrend_pct}%  |  W1: +${w.wave1_gain_pct}%  |  ${retrace}
+          </div>
+          <div class="wl-fib">
+            Bottom: $${(+w.w1_start).toFixed(2)}
+            &nbsp;·&nbsp; Fib 61.8%: $${(+w.fib_618).toFixed(2)}
+            &nbsp;·&nbsp; 78.6%: $${(+w.fib_786).toFixed(2)}
+          </div>
+          <div style="font-size:11px;margin-top:4px">${cdcLabel}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <span class="wl-badge ${w.status}">${w.status.toUpperCase()}</span>
+          <span style="font-size:10px;color:var(--muted)">${w.added_date || ''} (+${daysSince})</span>
+          <button class="icon-btn del" onclick="deleteWlItem('${w.id}')" title="ลบ">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function deleteWlItem(id) {
+  await fetch(`/api/wave12-watchlist/${id}`, { method: 'DELETE' });
+  wlItems = wlItems.filter(w => w.id !== id);
+  renderWatchlist();
+  showToast('🗑 ลบออกจาก Watchlist แล้ว', 'ok');
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────────
 init();
 loadAlerts();
+loadWatchlist();
 setInterval(pollSchedule, 30000);
+setInterval(loadWatchlist, 60000);   // refresh watchlist every 1 min
 startLogPoll();
 </script>
 </body>

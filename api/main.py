@@ -283,6 +283,119 @@ def _eval_alert(alert: dict) -> tuple[bool, str]:
 
     return ok, msg
 
+def check_wave12_watchlist() -> None:
+    """
+    Called every 10 minutes.
+    Checks all 'watching' Wave 1→2 items for:
+      - Invalidation : price ≤ w1_start  → 🔴 alert + mark invalid
+      - CDC Confirm  : EMA12 just crossed EMA26 → 🟢 alert + mark confirmed
+      - Auto-expire  : added > 45 days ago → mark expired
+    """
+    cfg      = load_config()
+    watchlist = cfg.get("wave12_watchlist", [])
+    watching  = [w for w in watchlist if w.get("status") == "watching"]
+    if not watching:
+        return
+
+    symbols = [w["ticker"] for w in watching]
+
+    # ── Batch fetch 1-month closes ─────────────────────────────────────────────
+    try:
+        import yfinance as yf
+        import pandas as pd
+        raw = yf.download(
+            symbols, period="1mo", interval="1d",
+            auto_adjust=True, progress=False, group_by="ticker",
+        )
+    except Exception:
+        return
+
+    def _get_closes(sym: str) -> list[float]:
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                lvl0 = raw.columns.get_level_values(0).unique().tolist()
+                if sym in lvl0:
+                    return raw[sym]["Close"].dropna().values.flatten().tolist()
+                return raw["Close"][sym].dropna().values.flatten().tolist()
+            return raw["Close"].dropna().values.flatten().tolist()
+        except Exception:
+            return []
+
+    from tradingview_mcp.core.services.cdc_service import calculate_ema
+
+    changed = False
+    for item in watching:
+        sym      = item["ticker"]
+        w1_start = float(item["w1_start"])
+        closes   = _get_closes(sym)
+        if not closes:
+            continue
+
+        cur = closes[-1]
+
+        # ── 1. Invalidation ───────────────────────────────────────────────────
+        if cur <= w1_start:
+            _tg_send(
+                f"🔴 <b>Wave 1→2 INVALID — {sym}</b>\n"
+                f"💥 ราคา ${cur:,.2f} ทะลุ bottom ${w1_start:,.2f}\n"
+                f"❌ Elliott Wave 2 rule ถูกละเมิด — pattern เสีย!\n"
+                f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+            )
+            item["status"]        = "invalid"
+            item["invalidated_at"] = datetime.utcnow().isoformat()
+            changed = True
+            continue
+
+        # ── 2. CDC Confirmation ───────────────────────────────────────────────
+        if len(closes) >= 30:
+            e12 = calculate_ema(closes, 12)
+            e26 = calculate_ema(closes, 26)
+            ema_bull  = [e12[i] > e26[i] for i in [-3, -2, -1]]
+            prev_cdc  = item.get("cdc_status", "watch")
+
+            if ema_bull[-1] and not ema_bull[-2]:    # Fresh cross today
+                fib618 = float(item.get("fib_618", 0))
+                fib786 = float(item.get("fib_786", 0))
+                _tg_send(
+                    f"🟢 <b>Wave 1→2 CDC CONFIRMED — {sym}</b>\n"
+                    f"✅ EMA12 เพิ่ง cross ขึ้น EMA26!\n"
+                    f"💰 ราคา ${cur:,.2f}  |  Bottom: ${w1_start:,.2f}\n"
+                    f"🎯 Fib 61.8%: ${fib618:,.2f}  |  78.6%: ${fib786:,.2f}\n"
+                    f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+                )
+                item["status"]       = "confirmed"
+                item["cdc_status"]   = "fresh_cross"
+                item["confirmed_at"] = datetime.utcnow().isoformat()
+                changed = True
+                continue
+
+            # Update cdc_status without alerting
+            new_cdc = (
+                "fresh_cross"  if ema_bull[-1] and not ema_bull[-2] else
+                "just_crossed" if ema_bull[-1] and not ema_bull[-3] else
+                "bullish"      if ema_bull[-1] else
+                "watch"
+            )
+            if new_cdc != prev_cdc:
+                item["cdc_status"] = new_cdc
+                changed = True
+
+        # ── 3. Auto-expire after 45 days ──────────────────────────────────────
+        added = item.get("added_date", "")
+        if added:
+            try:
+                from datetime import date
+                days = (date.today() - date.fromisoformat(added)).days
+                if days > 45:
+                    item["status"] = "expired"
+                    changed = True
+            except Exception:
+                pass
+
+    if changed:
+        save_config(cfg)
+
+
 def check_alerts() -> None:
     """Called by APScheduler every 10 minutes."""
     cfg     = load_config()
@@ -338,6 +451,14 @@ def _apply_schedule(cfg: dict) -> None:
         "interval",
         minutes=10,
         id="alert_checker",
+        replace_existing=True,
+    )
+    # Wave 1→2 watchlist checker — every 10 minutes, 24/7
+    scheduler.add_job(
+        check_wave12_watchlist,
+        "interval",
+        minutes=10,
+        id="wave12_checker",
         replace_existing=True,
     )
 
@@ -535,6 +656,64 @@ def market_snapshot():
     return get_market_snapshot()
 
 # ── Wave 1→2 Bottoming Setup Scanner ──────────────────────────────────────────
+
+@app.get("/api/wave12-watchlist")
+def get_wave12_watchlist():
+    return load_config().get("wave12_watchlist", [])
+
+@app.post("/api/wave12-watchlist/sync")
+def sync_wave12_watchlist(body: list[dict] = Body(...)):
+    """
+    Called by daily_report.py after the morning scan.
+    Upserts new setups into the watchlist (preserves existing items & status).
+    Returns how many were added.
+    """
+    cfg       = load_config()
+    watchlist = cfg.setdefault("wave12_watchlist", [])
+    existing  = {w["ticker"] for w in watchlist if w.get("status") == "watching"}
+    added     = 0
+    for r in body:
+        sym = r.get("ticker", "")
+        if not sym:
+            continue
+        if sym in existing:
+            # Update live fields for existing watching items
+            for w in watchlist:
+                if w["ticker"] == sym and w.get("status") == "watching":
+                    w["cdc_status"]   = r.get("cdc_status",   w.get("cdc_status"))
+                    w["retrace_pct"]  = r.get("retrace_pct",  w.get("retrace_pct"))
+                    w["current_price"] = r.get("current_price", w.get("current_price"))
+        else:
+            watchlist.append({
+                "id":              str(uuid.uuid4())[:8],
+                "ticker":          sym,
+                "w1_start":        r.get("w1_start", 0),
+                "w1_peak":         r.get("w1_peak",  0),
+                "fib_618":         r.get("fib_618",  0),
+                "fib_786":         r.get("fib_786",  0),
+                "wave1_gain_pct":  r.get("wave1_gain_pct", 0),
+                "downtrend_pct":   r.get("downtrend_pct",  0),
+                "retrace_pct":     r.get("retrace_pct",    0),
+                "fib_label":       r.get("fib_label", ""),
+                "current_price":   r.get("current_price", 0),
+                "cdc_status":      r.get("cdc_status", "watch"),
+                "added_date":      datetime.utcnow().date().isoformat(),
+                "status":          "watching",
+            })
+            added += 1
+    save_config(cfg)
+    return {"added": added, "total_watching": len([w for w in watchlist if w.get("status") == "watching"])}
+
+@app.delete("/api/wave12-watchlist/{item_id}")
+def delete_wave12_item(item_id: str):
+    cfg       = load_config()
+    watchlist = cfg.get("wave12_watchlist", [])
+    before    = len(watchlist)
+    cfg["wave12_watchlist"] = [w for w in watchlist if w.get("id") != item_id]
+    if len(cfg["wave12_watchlist"]) == before:
+        raise HTTPException(status_code=404, detail="Item not found")
+    save_config(cfg)
+    return {"ok": True}
 
 @app.get("/api/wave12-scan")
 def wave12_scan(

@@ -363,5 +363,18 @@ if cdc_cfg.get("wave12", True):
             no_signal_text="ไม่มี Wave 1→2 ที่กำลัง form วันนี้",
         ))
 
+    # ── Sync watchlist to API ──────────────────────────────────────────────────
+    if w12_results:
+        payload = json.dumps(w12_results, ensure_ascii=False).encode()
+        req = urllib.request.Request(
+            f"{BASE}/api/wave12-watchlist/sync",
+            data=payload, headers={"Content-Type": "application/json"},
+        )
+        try:
+            res = json.loads(urllib.request.urlopen(req, timeout=15).read())
+            print(f"Step 7: watchlist synced — +{res.get('added',0)} new, {res.get('total_watching',0)} watching")
+        except Exception as e:
+            print(f"Step 7: watchlist sync warning: {e}")
+
 print("Step 7 done")
 print("All steps complete!")
