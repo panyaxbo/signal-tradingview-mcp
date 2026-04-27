@@ -46,7 +46,23 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "sk-9d9423f9ab86437197bbe96180d401e3")
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def send(msg: str) -> bool:
-    for chunk in [msg[i:i+4000] for i in range(0, max(len(msg),1), 4000)]:
+    # Split at blank-line boundaries to avoid cutting HTML tags mid-entry
+    entries = msg.split("\n\n")
+    chunks, cur = [], ""
+    for e in entries:
+        block = e + "\n\n"
+        if len(cur) + len(block) > 3800:
+            if cur.strip():
+                chunks.append(cur.strip())
+            cur = block
+        else:
+            cur += block
+    if cur.strip():
+        chunks.append(cur.strip())
+    if not chunks:
+        chunks = [msg]
+
+    for chunk in chunks:
         payload = json.dumps({"chat_id": CHAT, "text": chunk, "parse_mode": "HTML"}).encode()
         req = urllib.request.Request(
             f"https://api.telegram.org/bot{BOT}/sendMessage",
