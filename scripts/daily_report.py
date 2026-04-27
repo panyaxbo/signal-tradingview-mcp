@@ -287,6 +287,7 @@ for item in AI_TARGETS:
 # ── STEP 6 — CDC Fresh Signal Scanner ────────────────────────────────────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
     scan_yahoo, scan_index_stocks, get_all_index_symbols, format_fresh_section,
+    scan_wave12_setups, format_wave12_section,
     DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
@@ -332,4 +333,35 @@ if universe:
     ))
 
 print("Step 6 done")
+
+
+# ── STEP 7 — Wave 1→2 Bottoming Setup Scanner ────────────────────────────────
+if cdc_cfg.get("wave12", True):
+    send("📐 <b>Wave 1→2 Bottoming Setup Scanner</b>\n⏳ กำลัง scan (ใช้ข้อมูล 1 ปี)...")
+
+    w12_universe: list[str] = []
+    if cdc_cfg.get("dow30",     True): w12_universe += DOW_30
+    if cdc_cfg.get("nasdaq100", True): w12_universe += NASDAQ_100
+    if cdc_cfg.get("sp500",     True): w12_universe += SP_500_EXTRA
+    w12_universe = sorted(set(w12_universe))
+
+    if w12_universe:
+        w12_results = scan_wave12_setups(symbols=w12_universe, period="1y")
+
+        # Split by CDC status for readability
+        w12_ready = [r for r in w12_results if r["cdc_status"] in ("fresh_cross", "just_crossed")]
+        w12_watch = [r for r in w12_results if r["cdc_status"] in ("watch", "bullish")]
+
+        send(format_wave12_section(
+            f"📐 WAVE 1→2 — CDC CONFIRMED ({len(w12_ready)} ตัว)",
+            w12_ready,
+            no_signal_text="ไม่มี Wave 1→2 ที่ CDC confirm วันนี้",
+        ))
+        send(format_wave12_section(
+            f"⏳ WAVE 1→2 — WATCH LIST ({len(w12_watch)} ตัว)",
+            w12_watch,
+            no_signal_text="ไม่มี Wave 1→2 ที่กำลัง form วันนี้",
+        ))
+
+print("Step 7 done")
 print("All steps complete!")

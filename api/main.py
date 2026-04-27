@@ -534,6 +534,25 @@ def yahoo_price(ticker: str):
 def market_snapshot():
     return get_market_snapshot()
 
+# ── Wave 1→2 Bottoming Setup Scanner ──────────────────────────────────────────
+
+@app.get("/api/wave12-scan")
+def wave12_scan(
+    indices: str = Query("dow30,nasdaq100,sp500", description="Comma-separated: dow30,nasdaq100,sp500"),
+):
+    """Scan for Wave 1→2 bottoming setups (uses 1y of data — takes ~60s)."""
+    from tradingview_mcp.core.services.cdc_scanner_service import (
+        scan_wave12_setups, DOW_30, NASDAQ_100, SP_500_EXTRA,
+    )
+    idx_set  = {s.strip().lower() for s in indices.split(",")}
+    universe: list[str] = []
+    if "dow30"    in idx_set: universe += DOW_30
+    if "nasdaq100" in idx_set: universe += NASDAQ_100
+    if "sp500"    in idx_set: universe += SP_500_EXTRA
+    universe = sorted(set(universe))
+    results  = scan_wave12_setups(symbols=universe, period="1y")
+    return results
+
 # ── Alert CRUD endpoints ───────────────────────────────────────────────────────
 
 @app.get("/api/alerts")

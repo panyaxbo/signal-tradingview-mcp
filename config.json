@@ -29,7 +29,8 @@
     "commodities": true,
     "dow30": true,
     "nasdaq100": true,
-    "sp500": true
+    "sp500": true,
+    "wave12": true
   },
   "ai_targets": [
     ["AAPL", "🍎", "nasdaq",  "AAPL",    "1D", "nasdaq"],
