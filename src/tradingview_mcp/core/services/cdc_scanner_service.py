@@ -131,7 +131,9 @@ def get_all_index_symbols() -> list[str]:
 
 def detect_fresh(closes: list[float]) -> Optional[tuple]:
     """
-    Check if the most recent candle is the 1st or 2nd candle in a new CDC zone.
+    Check if the most recent candle is the 1st or 2nd candle after a CDC bias flip.
+
+    Detects BUY↔SELL transitions only (ignores sub-zone fluctuations within same bias).
 
     Returns:
         (candle_num, zone_dict, price, ema12, ema26)  if fresh signal
@@ -149,12 +151,12 @@ def detect_fresh(closes: list[float]) -> Optional[tuple]:
     if cur["bias"] == "NEUTRAL":
         return None
 
-    # Candle 1: zone just changed
-    if cur["zone"] != z[-2]["zone"]:
+    # Candle 1: bias just flipped (BUY→SELL or SELL→BUY), previous was not NEUTRAL
+    if cur["bias"] != z[-2]["bias"] and z[-2]["bias"] != "NEUTRAL":
         return (1, cur, round(closes[-1], 4), round(e12[-1], 4), round(e26[-1], 4))
 
-    # Candle 2: zone changed 1 candle ago, holding
-    if z[-2]["zone"] == cur["zone"] and z[-3]["zone"] != cur["zone"]:
+    # Candle 2: bias flipped 1 candle ago and is still holding
+    if z[-2]["bias"] == cur["bias"] and z[-3]["bias"] != cur["bias"] and z[-3]["bias"] != "NEUTRAL":
         return (2, cur, round(closes[-1], 4), round(e12[-1], 4), round(e26[-1], 4))
 
     return None
