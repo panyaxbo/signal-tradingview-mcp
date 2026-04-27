@@ -133,7 +133,7 @@ def detect_fresh(closes: list[float]) -> Optional[tuple]:
     """
     Check if the most recent candle is the 1st or 2nd candle after a CDC bias flip.
 
-    Detects BUY↔SELL transitions only (ignores sub-zone fluctuations within same bias).
+    Detects EMA12/EMA26 crossover only — the true CDC Action Zone signal.
 
     Returns:
         (candle_num, zone_dict, price, ema12, ema26)  if fresh signal
@@ -145,18 +145,17 @@ def detect_fresh(closes: list[float]) -> Optional[tuple]:
     e12 = calculate_ema(closes, 12)
     e26 = calculate_ema(closes, 26)
 
-    z = [get_cdc_zone(closes[i], e12[i], e26[i]) for i in [-3, -2, -1]]
-    cur = z[-1]
+    cur = get_cdc_zone(closes[-1], e12[-1], e26[-1])
 
-    if cur["bias"] == "NEUTRAL":
-        return None
+    # Core CDC signal: EMA12 vs EMA26 crossover (last 3 candles)
+    ema_bull = [e12[i] > e26[i] for i in [-3, -2, -1]]
 
-    # Candle 1: bias just flipped (BUY→SELL or SELL→BUY), previous was not NEUTRAL
-    if cur["bias"] != z[-2]["bias"] and z[-2]["bias"] != "NEUTRAL":
+    # Candle 1: EMA12 just crossed EMA26 (fresh crossover this candle)
+    if ema_bull[-1] != ema_bull[-2]:
         return (1, cur, round(closes[-1], 4), round(e12[-1], 4), round(e26[-1], 4))
 
-    # Candle 2: bias flipped 1 candle ago and is still holding
-    if z[-2]["bias"] == cur["bias"] and z[-3]["bias"] != cur["bias"] and z[-3]["bias"] != "NEUTRAL":
+    # Candle 2: crossover happened 1 candle ago, still holding direction
+    if ema_bull[-1] == ema_bull[-2] and ema_bull[-2] != ema_bull[-3]:
         return (2, cur, round(closes[-1], 4), round(e12[-1], 4), round(e26[-1], 4))
 
     return None
