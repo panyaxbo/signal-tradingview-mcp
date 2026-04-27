@@ -284,58 +284,14 @@ for item in AI_TARGETS:
     print(f"Step 5 {lbl} done")
 
 
-# ── STEP 6 — CDC Fresh Signal Scanner ────────────────────────────────────────
+# ── STEP 6 — Wave 1→2 Bottoming Setup Scanner ────────────────────────────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_yahoo, scan_index_stocks, get_all_index_symbols, format_fresh_section,
     scan_wave12_setups, format_wave12_section,
     DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
 cdc_cfg = CFG.get("cdc_scanner", {})
 
-send("🔍 <b>CDC Fresh Signal Scanner (1D)</b>\n⏳ กำลัง scan รอสักครู่...")
-
-# Commodities
-if cdc_cfg.get("commodities", True):
-    comm_tickers = [
-        (item[0], item[1], item[2] if len(item) > 2 else "📊")
-        for item in comm_list
-    ]
-    comm_fresh = scan_yahoo(comm_tickers)
-    send(format_fresh_section("🏅 CDC FRESH SIGNAL — COMMODITIES (1D)", comm_fresh))
-
-# Build stock universe based on config toggles
-universe: list[str] = []
-if cdc_cfg.get("dow30",    True):  universe += DOW_30
-if cdc_cfg.get("nasdaq100",True):  universe += NASDAQ_100
-if cdc_cfg.get("sp500",    True):  universe += SP_500_EXTRA
-
-# Deduplicate
-universe = sorted(set(universe))
-
-if universe:
-    us_fresh = scan_index_stocks(symbols=universe)
-    us_buy   = [r for r in us_fresh if r["zone"]["bias"] == "BUY"]
-    us_sell  = [r for r in us_fresh if r["zone"]["bias"] == "SELL"]
-
-    indices_on = [k for k in ["dow30","nasdaq100","sp500"] if cdc_cfg.get(k, True)]
-    lbl = "/".join({"dow30":"DOW","nasdaq100":"NASDAQ","sp500":"S&P"}.get(k,"") for k in indices_on)
-
-    send(format_fresh_section(
-        f"📈 CDC FRESH BUY — {lbl} (1D)  ({len(us_buy)} ตัว)",
-        us_buy,
-        no_signal_text="ไม่มี fresh BUY signal วันนี้",
-    ))
-    send(format_fresh_section(
-        f"📉 CDC FRESH SELL — {lbl} (1D)  ({len(us_sell)} ตัว)",
-        us_sell,
-        no_signal_text="ไม่มี fresh SELL signal วันนี้",
-    ))
-
-print("Step 6 done")
-
-
-# ── STEP 7 — Wave 1→2 Bottoming Setup Scanner ────────────────────────────────
 if cdc_cfg.get("wave12", True):
     send("📐 <b>Wave 1→2 Bottoming Setup Scanner</b>\n⏳ กำลัง scan (ใช้ข้อมูล 1 ปี)...")
 
@@ -376,5 +332,5 @@ if cdc_cfg.get("wave12", True):
         except Exception as e:
             print(f"Step 7: watchlist sync warning: {e}")
 
-print("Step 7 done")
+print("Step 6 done")
 print("All steps complete!")
