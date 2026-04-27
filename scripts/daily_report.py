@@ -284,44 +284,66 @@ for item in AI_TARGETS:
     print(f"Step 5 {lbl} done")
 
 
-# ── STEP 6 — Wave 1→2 Bottoming Setup Scanner ────────────────────────────────
+# ── STEP 6 — Wave 1→2 (Bullish) + Wave A→B (Bearish) Setup Scanner ────────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
     scan_wave12_setups, format_wave12_section,
+    scan_waveab_setups, format_waveab_section,
     DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
 cdc_cfg = CFG.get("cdc_scanner", {})
 
 if cdc_cfg.get("wave12", True):
-    send("📐 <b>Wave 1→2 Bottoming Setup Scanner</b>\n⏳ กำลัง scan (ใช้ข้อมูล 1 ปี)...")
+    send("📐 <b>Wave 1→2 + Wave A→B Scanner</b>\n⏳ กำลัง scan (ใช้ข้อมูล 1 ปี)...")
 
-    w12_universe: list[str] = []
-    if cdc_cfg.get("dow30",     True): w12_universe += DOW_30
-    if cdc_cfg.get("nasdaq100", True): w12_universe += NASDAQ_100
-    if cdc_cfg.get("sp500",     True): w12_universe += SP_500_EXTRA
-    w12_universe = sorted(set(w12_universe))
+    scan_universe: list[str] = []
+    if cdc_cfg.get("dow30",     True): scan_universe += DOW_30
+    if cdc_cfg.get("nasdaq100", True): scan_universe += NASDAQ_100
+    if cdc_cfg.get("sp500",     True): scan_universe += SP_500_EXTRA
+    scan_universe = sorted(set(scan_universe))
 
+    # ── Wave 1→2 Bullish ──────────────────────────────────────────────────────
     w12_results: list = []
-    if w12_universe:
-        w12_results = scan_wave12_setups(symbols=w12_universe, period="1y")
+    if scan_universe:
+        w12_results = scan_wave12_setups(symbols=scan_universe, period="1y")
 
         w12_ready = [r for r in w12_results if r["cdc_status"] in ("fresh_cross", "just_crossed")]
         w12_watch = [r for r in w12_results if r["cdc_status"] in ("watch", "bullish")]
 
         send(format_wave12_section(
-            f"📐 WAVE 1→2 — CDC CONFIRMED ({len(w12_ready)} ตัว)",
+            f"🐂 WAVE 1→2 — CDC CONFIRMED ({len(w12_ready)} ตัว)",
             w12_ready,
             no_signal_text="ไม่มี Wave 1→2 ที่ CDC confirm วันนี้",
         ))
         send(format_wave12_section(
-            f"⏳ WAVE 1→2 — WATCH LIST ({len(w12_watch)} ตัว)",
+            f"🐂 WAVE 1→2 — WATCH LIST ({len(w12_watch)} ตัว)",
             w12_watch,
             no_signal_text="ไม่มี Wave 1→2 ที่กำลัง form วันนี้",
         ))
 
-    # ── Sync watchlist to API ──────────────────────────────────────────────────
-    if w12_results:
-        payload = json.dumps(w12_results, ensure_ascii=False).encode()
+    # ── Wave A→B Bearish ──────────────────────────────────────────────────────
+    wab_results: list = []
+    if scan_universe:
+        wab_results = scan_waveab_setups(symbols=scan_universe, period="1y")
+
+        wab_ready = [r for r in wab_results if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
+        wab_watch = [r for r in wab_results if r["cdc_status"] in ("watch_bear", "bearish")]
+
+        send(format_waveab_section(
+            f"🐻 WAVE A→B — CDC CONFIRMED ({len(wab_ready)} ตัว)",
+            wab_ready,
+            no_signal_text="ไม่มี Wave A→B ที่ CDC confirm วันนี้",
+        ))
+        send(format_waveab_section(
+            f"🐻 WAVE A→B — WATCH LIST ({len(wab_watch)} ตัว)",
+            wab_watch,
+            no_signal_text="ไม่มี Wave A→B ที่กำลัง form วันนี้",
+        ))
+
+    # ── Sync both to watchlist API ────────────────────────────────────────────
+    all_wave_results = w12_results + wab_results
+    if all_wave_results:
+        payload = json.dumps(all_wave_results, ensure_ascii=False).encode()
         req = urllib.request.Request(
             f"{BASE}/api/wave12-watchlist/sync",
             data=payload, headers={"Content-Type": "application/json"},

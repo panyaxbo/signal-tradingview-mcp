@@ -286,12 +286,20 @@ def _eval_alert(alert: dict) -> tuple[bool, str]:
 def check_wave12_watchlist() -> None:
     """
     Called every 10 minutes.
-    Checks all 'watching' Wave 1→2 items for:
+    Checks all 'watching' Wave 1→2 (bull) and Wave A→B (bear) items for:
+
+    Bull (direction="bull"):
       - Invalidation : price ≤ w1_start  → 🔴 alert + mark invalid
-      - CDC Confirm  : EMA12 just crossed EMA26 → 🟢 alert + mark confirmed
+      - CDC Confirm  : EMA12 crosses UP through EMA26 → 🟢 alert + mark confirmed
+
+    Bear (direction="bear"):
+      - Invalidation : price ≥ w1_start  (w1_start = wa_start = top) → 🔴 alert
+      - CDC Confirm  : EMA12 crosses DOWN through EMA26 → 🔴🐻 alert + mark confirmed
+
+    Both:
       - Auto-expire  : added > 45 days ago → mark expired
     """
-    cfg      = load_config()
+    cfg       = load_config()
     watchlist = cfg.get("wave12_watchlist", [])
     watching  = [w for w in watchlist if w.get("status") == "watching"]
     if not watching:
@@ -325,57 +333,94 @@ def check_wave12_watchlist() -> None:
 
     changed = False
     for item in watching:
-        sym      = item["ticker"]
-        w1_start = float(item["w1_start"])
-        closes   = _get_closes(sym)
+        sym       = item["ticker"]
+        w1_start  = float(item["w1_start"])   # bull=bottom, bear=top
+        direction = item.get("direction", "bull")
+        closes    = _get_closes(sym)
         if not closes:
             continue
 
         cur = closes[-1]
 
         # ── 1. Invalidation ───────────────────────────────────────────────────
-        if cur <= w1_start:
-            _tg_send(
+        if direction == "bull":
+            invalidated = cur <= w1_start
+            inv_msg = (
                 f"🔴 <b>Wave 1→2 INVALID — {sym}</b>\n"
                 f"💥 ราคา ${cur:,.2f} ทะลุ bottom ${w1_start:,.2f}\n"
                 f"❌ Elliott Wave 2 rule ถูกละเมิด — pattern เสีย!\n"
                 f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
             )
-            item["status"]        = "invalid"
+        else:  # bear
+            invalidated = cur >= w1_start
+            inv_msg = (
+                f"🔴 <b>Wave A→B INVALID — {sym}</b>\n"
+                f"💥 ราคา ${cur:,.2f} ทะลุ top ${w1_start:,.2f}\n"
+                f"❌ Wave B rule ถูกละเมิด — pattern เสีย!\n"
+                f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+            )
+
+        if invalidated:
+            _tg_send(inv_msg)
+            item["status"]         = "invalid"
             item["invalidated_at"] = datetime.utcnow().isoformat()
             changed = True
             continue
 
         # ── 2. CDC Confirmation ───────────────────────────────────────────────
         if len(closes) >= 30:
-            e12 = calculate_ema(closes, 12)
-            e26 = calculate_ema(closes, 26)
-            ema_bull  = [e12[i] > e26[i] for i in [-3, -2, -1]]
-            prev_cdc  = item.get("cdc_status", "watch")
+            e12      = calculate_ema(closes, 12)
+            e26      = calculate_ema(closes, 26)
+            prev_cdc = item.get("cdc_status", "watch")
+            fib618   = float(item.get("fib_618", 0))
+            fib786   = float(item.get("fib_786", 0))
 
-            if ema_bull[-1] and not ema_bull[-2]:    # Fresh cross today
-                fib618 = float(item.get("fib_618", 0))
-                fib786 = float(item.get("fib_786", 0))
-                _tg_send(
-                    f"🟢 <b>Wave 1→2 CDC CONFIRMED — {sym}</b>\n"
-                    f"✅ EMA12 เพิ่ง cross ขึ้น EMA26!\n"
-                    f"💰 ราคา ${cur:,.2f}  |  Bottom: ${w1_start:,.2f}\n"
-                    f"🎯 Fib 61.8%: ${fib618:,.2f}  |  78.6%: ${fib786:,.2f}\n"
-                    f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+            if direction == "bull":
+                ema_bull = [e12[i] > e26[i] for i in [-3, -2, -1]]
+                if ema_bull[-1] and not ema_bull[-2]:    # Fresh cross UP today
+                    _tg_send(
+                        f"🟢 <b>Wave 1→2 CDC CONFIRMED — {sym}</b>\n"
+                        f"✅ EMA12 เพิ่ง cross ขึ้น EMA26!\n"
+                        f"💰 ราคา ${cur:,.2f}  |  Bottom: ${w1_start:,.2f}\n"
+                        f"🎯 Fib 61.8%: ${fib618:,.2f}  |  78.6%: ${fib786:,.2f}\n"
+                        f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+                    )
+                    item["status"]       = "confirmed"
+                    item["cdc_status"]   = "fresh_cross"
+                    item["confirmed_at"] = datetime.utcnow().isoformat()
+                    changed = True
+                    continue
+
+                new_cdc = (
+                    "fresh_cross"  if ema_bull[-1] and not ema_bull[-2] else
+                    "just_crossed" if ema_bull[-1] and not ema_bull[-3] else
+                    "bullish"      if ema_bull[-1] else
+                    "watch"
                 )
-                item["status"]       = "confirmed"
-                item["cdc_status"]   = "fresh_cross"
-                item["confirmed_at"] = datetime.utcnow().isoformat()
-                changed = True
-                continue
 
-            # Update cdc_status without alerting
-            new_cdc = (
-                "fresh_cross"  if ema_bull[-1] and not ema_bull[-2] else
-                "just_crossed" if ema_bull[-1] and not ema_bull[-3] else
-                "bullish"      if ema_bull[-1] else
-                "watch"
-            )
+            else:  # bear
+                ema_bear = [e12[i] < e26[i] for i in [-3, -2, -1]]  # True = EMA12 below EMA26
+                if ema_bear[-1] and not ema_bear[-2]:    # Fresh cross DOWN today
+                    _tg_send(
+                        f"🔴🐻 <b>Wave A→B CDC CONFIRMED — {sym}</b>\n"
+                        f"✅ EMA12 เพิ่ง cross ลง EMA26!\n"
+                        f"💰 ราคา ${cur:,.2f}  |  Top: ${w1_start:,.2f}\n"
+                        f"🎯 Fib 61.8%: ${fib618:,.2f}  |  78.6%: ${fib786:,.2f}\n"
+                        f"📅 เพิ่มเมื่อ: {item.get('added_date','')}"
+                    )
+                    item["status"]       = "confirmed"
+                    item["cdc_status"]   = "fresh_cross_down"
+                    item["confirmed_at"] = datetime.utcnow().isoformat()
+                    changed = True
+                    continue
+
+                new_cdc = (
+                    "fresh_cross_down"  if ema_bear[-1] and not ema_bear[-2] else
+                    "just_crossed_down" if ema_bear[-1] and not ema_bear[-3] else
+                    "bearish"           if ema_bear[-1] else
+                    "watch_bear"
+                )
+
             if new_cdc != prev_cdc:
                 item["cdc_status"] = new_cdc
                 changed = True
@@ -666,40 +711,69 @@ def sync_wave12_watchlist(body: list[dict] = Body(...)):
     """
     Called by daily_report.py after the morning scan.
     Upserts new setups into the watchlist (preserves existing items & status).
+    Handles both bull (Wave 1→2) and bear (Wave A→B) directions.
+    Key: (ticker, direction) — same ticker can appear in both bull and bear lists.
     Returns how many were added.
     """
     cfg       = load_config()
     watchlist = cfg.setdefault("wave12_watchlist", [])
-    existing  = {w["ticker"] for w in watchlist if w.get("status") == "watching"}
-    added     = 0
+    # Key by (ticker, direction) to allow same stock in both bull and bear lists
+    existing  = {
+        (w["ticker"], w.get("direction", "bull"))
+        for w in watchlist if w.get("status") == "watching"
+    }
+    added = 0
     for r in body:
-        sym = r.get("ticker", "")
+        sym       = r.get("ticker", "")
+        direction = r.get("direction", "bull")
         if not sym:
             continue
-        if sym in existing:
+        key = (sym, direction)
+        if key in existing:
             # Update live fields for existing watching items
             for w in watchlist:
-                if w["ticker"] == sym and w.get("status") == "watching":
-                    w["cdc_status"]   = r.get("cdc_status",   w.get("cdc_status"))
-                    w["retrace_pct"]  = r.get("retrace_pct",  w.get("retrace_pct"))
+                if w["ticker"] == sym and w.get("direction", "bull") == direction and w.get("status") == "watching":
+                    w["cdc_status"]    = r.get("cdc_status",    w.get("cdc_status"))
+                    w["retrace_pct"]   = r.get("retrace_pct",   w.get("retrace_pct"))
                     w["current_price"] = r.get("current_price", w.get("current_price"))
         else:
-            watchlist.append({
-                "id":              str(uuid.uuid4())[:8],
-                "ticker":          sym,
-                "w1_start":        r.get("w1_start", 0),
-                "w1_peak":         r.get("w1_peak",  0),
-                "fib_618":         r.get("fib_618",  0),
-                "fib_786":         r.get("fib_786",  0),
-                "wave1_gain_pct":  r.get("wave1_gain_pct", 0),
-                "downtrend_pct":   r.get("downtrend_pct",  0),
-                "retrace_pct":     r.get("retrace_pct",    0),
-                "fib_label":       r.get("fib_label", ""),
-                "current_price":   r.get("current_price", 0),
-                "cdc_status":      r.get("cdc_status", "watch"),
-                "added_date":      datetime.utcnow().date().isoformat(),
-                "status":          "watching",
-            })
+            if direction == "bull":
+                entry = {
+                    "id":             str(uuid.uuid4())[:8],
+                    "direction":      "bull",
+                    "ticker":         sym,
+                    "w1_start":       r.get("w1_start", 0),       # bottom
+                    "w1_peak":        r.get("w1_peak",  0),       # Wave 1 peak
+                    "fib_618":        r.get("fib_618",  0),
+                    "fib_786":        r.get("fib_786",  0),
+                    "wave1_gain_pct": r.get("wave1_gain_pct", 0),
+                    "downtrend_pct":  r.get("downtrend_pct",  0),
+                    "retrace_pct":    r.get("retrace_pct",    0),
+                    "fib_label":      r.get("fib_label", ""),
+                    "current_price":  r.get("current_price", 0),
+                    "cdc_status":     r.get("cdc_status", "watch"),
+                    "added_date":     datetime.utcnow().date().isoformat(),
+                    "status":         "watching",
+                }
+            else:  # bear
+                entry = {
+                    "id":              str(uuid.uuid4())[:8],
+                    "direction":       "bear",
+                    "ticker":          sym,
+                    "w1_start":        r.get("w1_start",  r.get("wa_start", 0)),  # top (invalidation level)
+                    "w1_peak":         r.get("wa_bottom", r.get("w1_peak",  0)),  # Wave A bottom
+                    "fib_618":         r.get("fib_618",   0),
+                    "fib_786":         r.get("fib_786",   0),
+                    "wavea_drop_pct":  r.get("wavea_drop_pct", 0),
+                    "uptrend_pct":     r.get("uptrend_pct",    0),
+                    "retrace_pct":     r.get("retrace_pct",    0),
+                    "fib_label":       r.get("fib_label", ""),
+                    "current_price":   r.get("current_price", 0),
+                    "cdc_status":      r.get("cdc_status", "watch_bear"),
+                    "added_date":      datetime.utcnow().date().isoformat(),
+                    "status":          "watching",
+                }
+            watchlist.append(entry)
             added += 1
     save_config(cfg)
     return {"added": added, "total_watching": len([w for w in watchlist if w.get("status") == "watching"])}

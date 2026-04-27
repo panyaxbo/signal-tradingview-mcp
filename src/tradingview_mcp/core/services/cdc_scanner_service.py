@@ -493,6 +493,7 @@ def detect_wave12_setup(
     cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
 
     return {
+        "direction":          "bull",
         "downtrend_pct":      round(downtrend_pct * 100, 1),
         "w1_start":           round(w1_start, 4),
         "w1_peak":            round(w1_peak,  4),
@@ -597,6 +598,225 @@ def format_wave12_section(
                 f"   Fib 61.8%: ${r['fib_618']:,.2f}"
                 f"  |  78.6%: ${r['fib_786']:,.2f}\n"
                 f"   {_W12_CDC_LABEL.get(r['cdc_status'], r['cdc_status'])}"
+            )
+            lines.append("")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Wave A→B Bearish Setup Scanner
+# Mirror of Wave 1→2 but for downtrends (Elliott corrective waves A→B).
+#
+# Setup:
+#   Prior Uptrend  — EMA50 rose ≥20% over ~6 months
+#   Wave A top     — Highest close in last ~90 days
+#   Wave A drop    — Min close after top (≥10% decline from top)
+#   Wave B retrace — Current price retraced 25–90% of Wave A (staying below top)
+#   CDC confirm    — EMA12 just crossed DOWN through EMA26
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_waveab_setup(
+    closes: list[float],
+    min_wavea_pct: float = 0.10,        # Wave A drop must be ≥10%
+    min_uptrend_pct: float = 0.20,      # Prior EMA50 rise must be ≥20%
+    uptrend_lookback: int = 120,        # ~6 months of 1D candles for prior trend
+    top_lookback: int = 90,             # Search for the absolute top in last 90 days
+    min_days_since_top: int = 5,        # Top must be at least 5 days old
+) -> Optional[dict]:
+    """
+    Detect Wave A→B bearish corrective setup after a prolonged uptrend.
+
+    Algorithm:
+      1. Prior uptrend   — EMA50 rose ≥20% over ~6 months
+      2. Absolute top    — Highest close in last `top_lookback` candles
+      3. Wave A          — Lowest close AFTER the top (≥10% drop)
+      4. Wave B          — Current price retraced 25–90% of Wave A, below top
+      5. CDC status      — fresh_cross_down / just_crossed_down / bearish / watch_bear
+
+    Returns setup dict, or None if pattern not found.
+    """
+    min_len = uptrend_lookback + top_lookback + 10
+    if len(closes) < min_len:
+        return None
+
+    e12 = calculate_ema(closes, 12)
+    e26 = calculate_ema(closes, 26)
+    e50 = calculate_ema(closes, 50)
+
+    # ── 1. Prior Uptrend ───────────────────────────────────────────────────────
+    e50_trend_start = e50[-(uptrend_lookback + top_lookback)]
+    e50_at_top      = max(e50[-top_lookback:])
+    if e50_trend_start <= 0:
+        return None
+    uptrend_pct = (e50_at_top - e50_trend_start) / e50_trend_start
+    if uptrend_pct < min_uptrend_pct:
+        return None
+
+    # ── 2. Absolute Top (Wave A Start) ────────────────────────────────────────
+    search       = closes[-top_lookback:]
+    top_local_idx = search.index(max(search))
+    wa_start     = search[top_local_idx]   # The top price (Wave A origin)
+
+    days_since_top = len(search) - 1 - top_local_idx
+    if days_since_top < min_days_since_top:
+        return None     # Top too recent — not enough time for Wave A to form
+
+    # ── 3. Wave A Bottom — lowest close after the top ─────────────────────────
+    post_top = search[top_local_idx + 1:]
+    if not post_top:
+        return None
+
+    wa_bottom       = min(post_top)
+    days_since_wa   = len(post_top) - 1 - post_top.index(wa_bottom)
+
+    wavea_drop = (wa_start - wa_bottom) / wa_start
+    if wavea_drop < min_wavea_pct:
+        return None     # Wave A too small — not a real drop
+
+    # ── 4. Wave B Retracement ─────────────────────────────────────────────────
+    cur = closes[-1]
+    if cur >= wa_start:
+        return None     # Broke above top → Wave B rule violated (invalidated)
+
+    wavea_range = wa_start - wa_bottom
+    retrace_pct = (cur - wa_bottom) / wavea_range if wavea_range > 0 else 0
+
+    if not (0.25 <= retrace_pct <= 0.90):
+        return None     # Not in Wave B zone (25–90% retrace of Wave A)
+
+    fib_382 = wa_bottom + 0.382 * wavea_range
+    fib_500 = wa_bottom + 0.500 * wavea_range
+    fib_618 = wa_bottom + 0.618 * wavea_range
+    fib_786 = wa_bottom + 0.786 * wavea_range
+
+    fib_label = (
+        "~38.2%" if retrace_pct < 0.45 else
+        "~50.0%" if retrace_pct < 0.56 else
+        "~61.8%" if retrace_pct < 0.71 else
+        "~78.6%"
+    )
+
+    # ── 5. CDC Status (bearish = EMA12 crossing DOWN through EMA26) ───────────
+    ema_bear = [e12[i] < e26[i] for i in [-3, -2, -1]]  # True = EMA12 below EMA26
+    if   ema_bear[-1] and not ema_bear[-2]:
+        cdc_status = "fresh_cross_down"   # EMA12 just crossed below EMA26
+    elif ema_bear[-1] and not ema_bear[-3]:
+        cdc_status = "just_crossed_down"  # Crossed 1 candle ago, still holding
+    elif ema_bear[-1]:
+        cdc_status = "bearish"            # EMA12 already below EMA26 (older signal)
+    else:
+        cdc_status = "watch_bear"         # Pattern ready — waiting for EMA12/EMA26 cross down
+
+    cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
+
+    days_since_top_val = days_since_top
+
+    return {
+        "direction":          "bear",
+        "uptrend_pct":        round(uptrend_pct * 100, 1),
+        "wa_start":           round(wa_start, 4),     # Top (Wave A origin)
+        "wa_bottom":          round(wa_bottom, 4),    # Wave A trough
+        "wavea_drop_pct":     round(wavea_drop * 100, 1),
+        "retrace_pct":        round(retrace_pct * 100, 1),
+        "fib_label":          fib_label,
+        "fib_382":            round(fib_382, 4),
+        "fib_500":            round(fib_500, 4),
+        "fib_618":            round(fib_618, 4),
+        "fib_786":            round(fib_786, 4),
+        "current_price":      round(cur, 4),
+        "cdc_status":         cdc_status,
+        "cdc_zone":           cdc_zone,
+        "days_since_top":     days_since_top_val,
+        "days_since_wa":      days_since_wa,
+        # Alias for watchlist compatibility (invalidation check uses w1_start)
+        "w1_start":           round(wa_start, 4),
+    }
+
+
+def scan_waveab_setups(
+    symbols: list[str] | None = None,
+    period: str = "1y",
+) -> list[dict]:
+    """
+    Scan US index stocks for Wave A→B bearish corrective setups.
+    Uses 1-year data (batch download) for proper uptrend assessment.
+
+    Returns list of result dicts sorted by:
+      CDC priority (fresh_cross_down first) → deeper Wave B retrace first
+    """
+    if symbols is None:
+        symbols = get_all_index_symbols()
+
+    # ── Batch download (1 year) ────────────────────────────────────────────────
+    closes_map: dict[str, list[float]] = {}
+    try:
+        closes_map = _batch_fetch_closes(symbols, period=period)
+    except Exception:
+        pass
+
+    # Fallback individual fetch
+    missing = [s for s in symbols if s not in closes_map]
+    if missing:
+        def _fetch_one(sym):
+            try:
+                c = fetch_ohlcv_yahoo(sym, period=period, interval="1d")
+                if len(c) >= 150:
+                    return sym, c
+            except Exception:
+                pass
+            return sym, None
+
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            for sym, closes in ex.map(_fetch_one, missing):
+                if closes:
+                    closes_map[sym] = closes
+
+    # ── Detect pattern ─────────────────────────────────────────────────────────
+    results: list[dict] = []
+    for sym, closes in closes_map.items():
+        r = detect_waveab_setup(closes)
+        if r:
+            r["ticker"] = sym
+            r["label"]  = sym
+            results.append(r)
+
+    # Sort: CDC status priority first, then deeper Wave B retracement (higher retrace = closer to top = more dangerous = more interesting short)
+    _pri = {"fresh_cross_down": 0, "just_crossed_down": 1, "watch_bear": 2, "bearish": 3}
+    results.sort(key=lambda x: (_pri.get(x["cdc_status"], 9), -x["retrace_pct"]))
+    return results
+
+
+# ── Wave A→B Telegram Formatter ────────────────────────────────────────────────
+
+_WAB_CDC_LABEL = {
+    "fresh_cross_down":  "🆕 CDC เพิ่ง cross bearish!",
+    "just_crossed_down": "2️⃣ CDC cross ลงเมื่อวาน (candle 2)",
+    "bearish":           "🔴 CDC bearish อยู่",
+    "watch_bear":        "⏳ รอ CDC cross ลง (pattern ready)",
+}
+
+
+def format_waveab_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่มี Wave A→B setup วันนี้",
+) -> str:
+    """Format Wave A→B setups as Telegram HTML."""
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+    else:
+        for r in results:
+            zone = r["cdc_zone"]
+            lines.append(
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}\n"
+                f"   📈 Uptrend: +{r['uptrend_pct']}%"
+                f"  |  WA drop: -{r['wavea_drop_pct']}%\n"
+                f"   📐 WB retrace: {r['retrace_pct']}% {r['fib_label']}"
+                f"  |  Top: ${r['wa_start']:,.2f}\n"
+                f"   Fib 61.8%: ${r['fib_618']:,.2f}"
+                f"  |  78.6%: ${r['fib_786']:,.2f}\n"
+                f"   {_WAB_CDC_LABEL.get(r['cdc_status'], r['cdc_status'])}"
             )
             lines.append("")
     return "\n".join(lines)

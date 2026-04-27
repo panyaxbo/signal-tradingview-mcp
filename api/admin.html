@@ -745,7 +745,13 @@ function renderWatchlist() {
   const wrap    = document.getElementById('wl-list');
 
   const counts = { watching: 0, confirmed: 0, invalid: 0, expired: 0 };
-  wlItems.forEach(w => { if (counts[w.status] !== undefined) counts[w.status]++; });
+  const bullCnt = { watching: 0, confirmed: 0 };
+  const bearCnt = { watching: 0, confirmed: 0 };
+  wlItems.forEach(w => {
+    if (counts[w.status] !== undefined) counts[w.status]++;
+    if (w.direction === 'bear') { if (bearCnt[w.status] !== undefined) bearCnt[w.status]++; }
+    else                        { if (bullCnt[w.status] !== undefined) bullCnt[w.status]++; }
+  });
 
   summary.innerHTML = [
     ['watching',  '⏳', counts.watching,  'var(--yellow)'],
@@ -754,7 +760,11 @@ function renderWatchlist() {
     ['expired',   '⌛', counts.expired,   'var(--muted)'],
   ].filter(([,,n]) => n > 0).map(([s, e, n, c]) =>
     `<span style="background:rgba(255,255,255,.05);border:1px solid ${c};color:${c};border-radius:20px;padding:3px 10px;font-size:12px;font-weight:700">${e} ${s}: ${n}</span>`
-  ).join('');
+  ).join('') + (
+    (bullCnt.watching + bullCnt.confirmed + bearCnt.watching + bearCnt.confirmed > 0)
+      ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">🐂 ${bullCnt.watching + bullCnt.confirmed}  🐻 ${bearCnt.watching + bearCnt.confirmed}</span>`
+      : ''
+  );
 
   if (!wlItems.length) {
     wrap.innerHTML = '<div style="color:var(--muted);font-size:13px">ยังไม่มีรายการ — Scanner จะเพิ่มทุกเช้าหลัง Run</div>';
@@ -762,19 +772,39 @@ function renderWatchlist() {
   }
 
   const CDC_DOT = {
-    watch:        '<span class="wl-cdc-dot cdc-watch"></span>รอ CDC cross',
-    bullish:      '<span class="wl-cdc-dot cdc-bullish"></span>CDC bullish',
-    fresh_cross:  '<span class="wl-cdc-dot cdc-cross"></span>CDC fresh cross 🆕',
-    just_crossed: '<span class="wl-cdc-dot cdc-cross"></span>CDC cross candle 2',
+    // Bull
+    watch:              '<span class="wl-cdc-dot cdc-watch"></span>รอ CDC cross ขึ้น',
+    bullish:            '<span class="wl-cdc-dot cdc-bullish"></span>CDC bullish',
+    fresh_cross:        '<span class="wl-cdc-dot cdc-cross"></span>CDC fresh cross ขึ้น 🆕',
+    just_crossed:       '<span class="wl-cdc-dot cdc-cross"></span>CDC cross ขึ้น candle 2',
+    // Bear
+    watch_bear:         '<span class="wl-cdc-dot cdc-watch"></span>รอ CDC cross ลง',
+    bearish:            '<span class="wl-cdc-dot" style="background:#ff6b6b"></span>CDC bearish',
+    fresh_cross_down:   '<span class="wl-cdc-dot" style="background:#ff6b6b"></span>CDC fresh cross ลง 🆕',
+    just_crossed_down:  '<span class="wl-cdc-dot" style="background:#ff6b6b"></span>CDC cross ลง candle 2',
   };
 
-  // Sort: watching first, then confirmed, then others
+  // Sort: bull watching first, bear watching, then confirmed, then others
   const order = { watching: 0, confirmed: 1, invalid: 2, expired: 3 };
-  const sorted = [...wlItems].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+  const sorted = [...wlItems].sort((a, b) => {
+    const sa = order[a.status] ?? 9, sb = order[b.status] ?? 9;
+    if (sa !== sb) return sa - sb;
+    // Within same status: bull before bear
+    return (a.direction === 'bear' ? 1 : 0) - (b.direction === 'bear' ? 1 : 0);
+  });
 
   wrap.innerHTML = sorted.map(w => {
-    const cdcLabel = CDC_DOT[w.cdc_status] || w.cdc_status;
-    const retrace  = w.retrace_pct ? `W2: ${w.retrace_pct}% ${w.fib_label || ''}` : '';
+    const isBear    = w.direction === 'bear';
+    const dirBadge  = isBear
+      ? `<span style="font-size:10px;background:rgba(255,107,107,.15);color:#ff6b6b;border-radius:4px;padding:1px 5px;margin-left:4px">🐻 Bear</span>`
+      : `<span style="font-size:10px;background:rgba(0,211,149,.1);color:var(--green);border-radius:4px;padding:1px 5px;margin-left:4px">🐂 Bull</span>`;
+    const cdcLabel  = CDC_DOT[w.cdc_status] || w.cdc_status;
+    const waveLabel = isBear ? `WB: ${w.retrace_pct}%` : `W2: ${w.retrace_pct}%`;
+    const retrace   = w.retrace_pct ? `${waveLabel} ${w.fib_label || ''}` : '';
+    const trendInfo = isBear
+      ? `📈 +${w.uptrend_pct||'?'}%  |  WA drop: -${w.wavea_drop_pct||'?'}%  |  ${retrace}`
+      : `📉 -${w.downtrend_pct||'?'}%  |  W1: +${w.wave1_gain_pct||'?'}%  |  ${retrace}`;
+    const anchorLabel = isBear ? 'Top' : 'Bottom';
     const daysSince = w.added_date
       ? Math.floor((Date.now() - new Date(w.added_date)) / 86400000) + 'd'
       : '';
@@ -782,16 +812,14 @@ function renderWatchlist() {
     <div class="wl-row ${w.status}">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:14px">${esc(w.ticker)}
-            <span style="font-size:12px;color:var(--muted);font-weight:400;margin-left:6px">$${(+w.current_price||+w.w1_peak).toFixed(2)}</span>
+          <div style="font-weight:700;font-size:14px">${esc(w.ticker)}${dirBadge}
+            <span style="font-size:12px;color:var(--muted);font-weight:400;margin-left:6px">$${(+w.current_price||+w.w1_peak||0).toFixed(2)}</span>
           </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px">
-            📉 -${w.downtrend_pct}%  |  W1: +${w.wave1_gain_pct}%  |  ${retrace}
-          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">${trendInfo}</div>
           <div class="wl-fib">
-            Bottom: $${(+w.w1_start).toFixed(2)}
-            &nbsp;·&nbsp; Fib 61.8%: $${(+w.fib_618).toFixed(2)}
-            &nbsp;·&nbsp; 78.6%: $${(+w.fib_786).toFixed(2)}
+            ${anchorLabel}: $${(+w.w1_start||0).toFixed(2)}
+            &nbsp;·&nbsp; Fib 61.8%: $${(+w.fib_618||0).toFixed(2)}
+            &nbsp;·&nbsp; 78.6%: $${(+w.fib_786||0).toFixed(2)}
           </div>
           <div style="font-size:11px;margin-top:4px">${cdcLabel}</div>
         </div>
