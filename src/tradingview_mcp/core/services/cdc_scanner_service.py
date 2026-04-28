@@ -727,29 +727,12 @@ def scan_both_setups(
     if symbols is None:
         symbols = get_all_index_symbols()
 
-    # ── Batch download (1 year) — chunked to avoid OOM ────────────────────────
+    # ── Batch download in 2-3 chunks (large enough to be fast, small enough for RAM) ──
     closes_map: dict[str, list[float]] = {}
     try:
-        closes_map = _batch_fetch_closes(symbols, period=period)
+        closes_map = _batch_fetch_closes(symbols, period=period, chunk_size=220)
     except Exception:
         pass
-
-    # Fallback individual fetch for any missing symbols
-    missing = [s for s in symbols if s not in closes_map]
-    if missing:
-        def _fetch_one(sym):
-            try:
-                c = fetch_ohlcv_yahoo(sym, period=period, interval="1d")
-                if len(c) >= 150:
-                    return sym, c
-            except Exception:
-                pass
-            return sym, None
-
-        with ThreadPoolExecutor(max_workers=20) as ex:
-            for sym, closes in ex.map(_fetch_one, missing):
-                if closes:
-                    closes_map[sym] = closes
 
     # ── Detect both patterns in a single pass ─────────────────────────────────
     bull_results: list[dict] = []
