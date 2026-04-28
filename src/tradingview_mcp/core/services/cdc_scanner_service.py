@@ -169,55 +169,62 @@ def detect_fresh(closes: list[float]) -> Optional[tuple]:
 
 # ── Batch OHLCV via yfinance ───────────────────────────────────────────────────
 
-def _batch_fetch_closes(symbols: list[str], period: str = "3mo") -> dict[str, list[float]]:
+def _batch_fetch_closes(
+    symbols: list[str],
+    period: str = "3mo",
+    chunk_size: int = 80,
+) -> dict[str, list[float]]:
     """
-    Download close prices for all symbols in ONE yfinance batch call.
+    Download close prices for all symbols in chunked yfinance batch calls.
+    Processes `chunk_size` symbols at a time to avoid OOM on Railway.
 
     Returns dict: {symbol: [close, ...]} (oldest → newest)
     """
     import yfinance as yf
     import pandas as pd
 
-    # yfinance batch download
-    data = yf.download(
-        tickers=symbols,
-        period=period,
-        interval="1d",
-        auto_adjust=True,
-        progress=False,
-        group_by="ticker",
-    )
-
     result: dict[str, list[float]] = {}
 
-    if data.empty:
-        return result
-
-    if isinstance(data.columns, pd.MultiIndex):
-        lvl0 = data.columns.get_level_values(0).unique().tolist()
-        lvl1 = data.columns.get_level_values(1).unique().tolist()
-
-        # yfinance ≥1.x: level 0 = ticker, level 1 = OHLCV  → data[sym]["Close"]
-        # yfinance  old : level 0 = OHLCV,  level 1 = ticker → data["Close"][sym]
-        ticker_first = "Close" not in lvl0 and any(s in lvl0 for s in symbols[:3])
-
-        for sym in symbols:
-            try:
-                if ticker_first:
-                    closes = data[sym]["Close"].dropna().tolist()
-                else:
-                    closes = data["Close"][sym].dropna().tolist()
+    def _parse_chunk(data, chunk: list[str]) -> None:
+        if data.empty:
+            return
+        if isinstance(data.columns, pd.MultiIndex):
+            lvl0 = data.columns.get_level_values(0).unique().tolist()
+            ticker_first = "Close" not in lvl0 and any(s in lvl0 for s in chunk[:3])
+            for sym in chunk:
+                try:
+                    closes = (
+                        data[sym]["Close"].dropna().tolist()
+                        if ticker_first
+                        else data["Close"][sym].dropna().tolist()
+                    )
+                    if len(closes) >= 30:
+                        result[sym] = closes
+                except Exception:
+                    pass
+        else:
+            col = "Close" if "Close" in data.columns else "close"
+            if col in data.columns and len(chunk) == 1:
+                closes = data[col].dropna().tolist()
                 if len(closes) >= 30:
-                    result[sym] = closes
-            except Exception:
-                pass
-    else:
-        # Single ticker — flat columns
-        col = "Close" if "Close" in data.columns else "close"
-        if col in data.columns and len(symbols) == 1:
-            closes = data[col].dropna().tolist()
-            if len(closes) >= 30:
-                result[symbols[0]] = closes
+                    result[chunk[0]] = closes
+
+    # Process in chunks to keep memory low
+    for i in range(0, len(symbols), chunk_size):
+        chunk = symbols[i: i + chunk_size]
+        try:
+            data = yf.download(
+                tickers=chunk,
+                period=period,
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+            )
+            _parse_chunk(data, chunk)
+            del data   # free memory immediately after each chunk
+        except Exception:
+            pass
 
     return result
 
