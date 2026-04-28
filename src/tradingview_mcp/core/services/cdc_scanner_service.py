@@ -527,51 +527,10 @@ def scan_wave12_setups(
 ) -> list[dict]:
     """
     Scan US index stocks for Wave 1→2 bottoming setups.
-    Uses 1-year data (batch download) for proper downtrend assessment.
-
-    Returns list of result dicts sorted by:
-      CDC priority (fresh_cross first) → retrace depth (deeper = more complete setup)
+    Delegates to scan_both_setups() to avoid double-downloading data.
     """
-    if symbols is None:
-        symbols = get_all_index_symbols()
-
-    # ── Batch download (1 year) ────────────────────────────────────────────────
-    closes_map: dict[str, list[float]] = {}
-    try:
-        closes_map = _batch_fetch_closes(symbols, period=period)
-    except Exception:
-        pass
-
-    # Fallback individual fetch
-    missing = [s for s in symbols if s not in closes_map]
-    if missing:
-        def _fetch_one(sym):
-            try:
-                c = fetch_ohlcv_yahoo(sym, period=period, interval="1d")
-                if len(c) >= 150:
-                    return sym, c
-            except Exception:
-                pass
-            return sym, None
-
-        with ThreadPoolExecutor(max_workers=20) as ex:
-            for sym, closes in ex.map(_fetch_one, missing):
-                if closes:
-                    closes_map[sym] = closes
-
-    # ── Detect pattern ─────────────────────────────────────────────────────────
-    results: list[dict] = []
-    for sym, closes in closes_map.items():
-        r = detect_wave12_setup(closes)
-        if r:
-            r["ticker"] = sym
-            r["label"]  = sym
-            results.append(r)
-
-    # Sort: CDC status priority first, then deeper Wave 2 retracement first
-    _pri = {"fresh_cross": 0, "just_crossed": 1, "watch": 2, "bullish": 3}
-    results.sort(key=lambda x: (_pri.get(x["cdc_status"], 9), -x["retrace_pct"]))
-    return results
+    bull, _bear = scan_both_setups(symbols=symbols, period=period)
+    return bull
 
 
 # ── Telegram Formatter ─────────────────────────────────────────────────────────
@@ -751,17 +710,31 @@ def scan_waveab_setups(
     Returns list of result dicts sorted by:
       CDC priority (fresh_cross_down first) → deeper Wave B retrace first
     """
+    bull, bear = scan_both_setups(symbols=symbols, period=period)
+    return bear
+
+
+def scan_both_setups(
+    symbols: list[str] | None = None,
+    period: str = "1y",
+) -> tuple[list[dict], list[dict]]:
+    """
+    Download data ONCE, then detect both Wave 1→2 (bull) and Wave A→B (bear).
+    Halves memory usage vs calling scan_wave12_setups + scan_waveab_setups separately.
+
+    Returns (bull_results, bear_results)
+    """
     if symbols is None:
         symbols = get_all_index_symbols()
 
-    # ── Batch download (1 year) ────────────────────────────────────────────────
+    # ── Batch download (1 year) — chunked to avoid OOM ────────────────────────
     closes_map: dict[str, list[float]] = {}
     try:
         closes_map = _batch_fetch_closes(symbols, period=period)
     except Exception:
         pass
 
-    # Fallback individual fetch
+    # Fallback individual fetch for any missing symbols
     missing = [s for s in symbols if s not in closes_map]
     if missing:
         def _fetch_one(sym):
@@ -778,19 +751,32 @@ def scan_waveab_setups(
                 if closes:
                     closes_map[sym] = closes
 
-    # ── Detect pattern ─────────────────────────────────────────────────────────
-    results: list[dict] = []
-    for sym, closes in closes_map.items():
-        r = detect_waveab_setup(closes)
-        if r:
-            r["ticker"] = sym
-            r["label"]  = sym
-            results.append(r)
+    # ── Detect both patterns in a single pass ─────────────────────────────────
+    bull_results: list[dict] = []
+    bear_results: list[dict] = []
 
-    # Sort: CDC status priority first, then deeper Wave B retracement (higher retrace = closer to top = more dangerous = more interesting short)
-    _pri = {"fresh_cross_down": 0, "just_crossed_down": 1, "watch_bear": 2, "bearish": 3}
-    results.sort(key=lambda x: (_pri.get(x["cdc_status"], 9), -x["retrace_pct"]))
-    return results
+    for sym, closes in closes_map.items():
+        rb = detect_wave12_setup(closes)
+        if rb:
+            rb["ticker"] = sym
+            rb["label"]  = sym
+            bull_results.append(rb)
+
+        ra = detect_waveab_setup(closes)
+        if ra:
+            ra["ticker"] = sym
+            ra["label"]  = sym
+            bear_results.append(ra)
+
+    # Sort bull: CDC priority → deeper retrace first
+    _pri_bull = {"fresh_cross": 0, "just_crossed": 1, "watch": 2, "bullish": 3}
+    bull_results.sort(key=lambda x: (_pri_bull.get(x["cdc_status"], 9), -x["retrace_pct"]))
+
+    # Sort bear: CDC priority → deeper retrace first
+    _pri_bear = {"fresh_cross_down": 0, "just_crossed_down": 1, "watch_bear": 2, "bearish": 3}
+    bear_results.sort(key=lambda x: (_pri_bear.get(x["cdc_status"], 9), -x["retrace_pct"]))
+
+    return bull_results, bear_results
 
 
 # ── Wave A→B Telegram Formatter ────────────────────────────────────────────────

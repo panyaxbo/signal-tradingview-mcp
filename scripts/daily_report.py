@@ -302,8 +302,7 @@ for item in AI_TARGETS:
 
 # ── STEP 6 — Wave 1→2 (Bullish) + Wave A→B (Bearish) Setup Scanner ────────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_wave12_setups, format_wave12_section,
-    scan_waveab_setups, format_waveab_section,
+    scan_both_setups, format_wave12_section, format_waveab_section,
     DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
@@ -318,13 +317,16 @@ if cdc_cfg.get("wave12", True):
     if cdc_cfg.get("sp500",     True): scan_universe += SP_500_EXTRA
     scan_universe = sorted(set(scan_universe))
 
-    # ── Wave 1→2 Bullish ──────────────────────────────────────────────────────
+    # ── Scan both directions in ONE pass (download data only once) ───────────
     w12_results: list = []
+    wab_results: list = []
     if scan_universe:
-        w12_results = scan_wave12_setups(symbols=scan_universe, period="1y")
+        w12_results, wab_results = scan_both_setups(symbols=scan_universe, period="1y")
 
         w12_ready = [r for r in w12_results if r["cdc_status"] in ("fresh_cross", "just_crossed")]
         w12_watch = [r for r in w12_results if r["cdc_status"] in ("watch", "bullish")]
+        wab_ready = [r for r in wab_results if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
+        wab_watch = [r for r in wab_results if r["cdc_status"] in ("watch_bear", "bearish")]
 
         send(format_wave12_section(
             f"🐂 WAVE 1→2 — CDC CONFIRMED ({len(w12_ready)} ตัว)",
@@ -336,15 +338,6 @@ if cdc_cfg.get("wave12", True):
             w12_watch,
             no_signal_text="ไม่มี Wave 1→2 ที่กำลัง form วันนี้",
         ))
-
-    # ── Wave A→B Bearish ──────────────────────────────────────────────────────
-    wab_results: list = []
-    if scan_universe:
-        wab_results = scan_waveab_setups(symbols=scan_universe, period="1y")
-
-        wab_ready = [r for r in wab_results if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
-        wab_watch = [r for r in wab_results if r["cdc_status"] in ("watch_bear", "bearish")]
-
         send(format_waveab_section(
             f"🐻 WAVE A→B — CDC CONFIRMED ({len(wab_ready)} ตัว)",
             wab_ready,
