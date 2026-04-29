@@ -202,7 +202,7 @@ def trigger_report() -> None:
     with _run_lock:
         if _running:
             return
-    _last_report_date = datetime.utcnow().strftime("%Y-%m-%d")
+        _last_report_date = datetime.utcnow().strftime("%Y-%m-%d")
         _running = True
     _run_log.clear()
     threading.Thread(target=_do_run, daemon=True).start()
