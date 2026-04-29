@@ -548,22 +548,20 @@ def format_wave12_section(
     results: list[dict],
     no_signal_text: str = "ไม่มี Wave 1→2 setup วันนี้",
 ) -> str:
-    """Format Wave 1→2 setups as Telegram HTML."""
+    """Format Wave 1→2 setups as Telegram HTML (compact 2-line per item)."""
     lines = [f"<b>{title}</b>", ""]
     if not results:
         lines.append(no_signal_text)
     else:
         for r in results:
             zone = r["cdc_zone"]
+            cdc  = _W12_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
             lines.append(
-                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}\n"
-                f"   📉 Downtrend: -{r['downtrend_pct']}%"
-                f"  |  W1: +{r['wave1_gain_pct']}%\n"
-                f"   📐 W2 retrace: {r['retrace_pct']}% {r['fib_label']}"
-                f"  |  Bottom: ${r['w1_start']:,.2f}\n"
-                f"   Fib 61.8%: ${r['fib_618']:,.2f}"
-                f"  |  78.6%: ${r['fib_786']:,.2f}\n"
-                f"   {_W12_CDC_LABEL.get(r['cdc_status'], r['cdc_status'])}"
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  W2:{r['retrace_pct']}% {r['fib_label']}"
+                f"  🎯${r['fib_618']:,.2f}/${r['fib_786']:,.2f}\n"
+                f"   ↓{r['downtrend_pct']}% W1+{r['wave1_gain_pct']}%"
+                f"  bot:${r['w1_start']:,.2f}  {cdc}"
             )
             lines.append("")
     return "\n".join(lines)
@@ -777,22 +775,20 @@ def format_waveab_section(
     results: list[dict],
     no_signal_text: str = "ไม่มี Wave A→B setup วันนี้",
 ) -> str:
-    """Format Wave A→B setups as Telegram HTML."""
+    """Format Wave A→B setups as Telegram HTML (compact 2-line per item)."""
     lines = [f"<b>{title}</b>", ""]
     if not results:
         lines.append(no_signal_text)
     else:
         for r in results:
             zone = r["cdc_zone"]
+            cdc  = _WAB_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
             lines.append(
-                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}\n"
-                f"   📈 Uptrend: +{r['uptrend_pct']}%"
-                f"  |  WA drop: -{r['wavea_drop_pct']}%\n"
-                f"   📐 WB retrace: {r['retrace_pct']}% {r['fib_label']}"
-                f"  |  Top: ${r['wa_start']:,.2f}\n"
-                f"   Fib 61.8%: ${r['fib_618']:,.2f}"
-                f"  |  78.6%: ${r['fib_786']:,.2f}\n"
-                f"   {_WAB_CDC_LABEL.get(r['cdc_status'], r['cdc_status'])}"
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  WB:{r['retrace_pct']}% {r['fib_label']}"
+                f"  🎯${r['fib_618']:,.2f}/${r['fib_786']:,.2f}\n"
+                f"   ↑{r['uptrend_pct']}% WA-{r['wavea_drop_pct']}%"
+                f"  top:${r['wa_start']:,.2f}  {cdc}"
             )
             lines.append("")
     return "\n".join(lines)
