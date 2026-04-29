@@ -174,6 +174,7 @@ _MEM_CONFIG: dict = {}
 _run_log: deque[str] = deque(maxlen=500)
 _running  = False
 _run_lock = threading.Lock()
+_last_report_date: str = ""   # "YYYY-MM-DD" of last successful trigger
 
 def _do_run() -> None:
     global _running
@@ -197,10 +198,11 @@ def _do_run() -> None:
         _running = False
 
 def trigger_report() -> None:
-    global _running
+    global _running, _last_report_date
     with _run_lock:
         if _running:
             return
+    _last_report_date = datetime.utcnow().strftime("%Y-%m-%d")
         _running = True
     _run_log.clear()
     threading.Thread(target=_do_run, daemon=True).start()
@@ -479,6 +481,34 @@ def check_alerts() -> None:
     if changed:
         save_config(cfg)
 
+def _startup_catchup(cfg: dict) -> None:
+    """
+    If the service restarted during or just after the scheduled report window
+    (within 60 minutes of the configured hour), and no report has been sent
+    today yet, trigger one immediately so we don't miss a day.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        sch = cfg.get("schedule", {})
+        tz_name = sch.get("timezone", "Asia/Bangkok")
+        report_hour   = int(sch.get("hour",   6))
+        report_minute = int(sch.get("minute", 0))
+
+        tz  = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        today_str = now.strftime("%Y-%m-%d")
+
+        # Window: report_time .. report_time + 60 min
+        window_start = now.replace(hour=report_hour, minute=report_minute, second=0, microsecond=0)
+        window_end   = window_start + timedelta(minutes=60)
+
+        if window_start <= now <= window_end and _last_report_date != today_str:
+            print(f"[startup] Catch-up: service started at {now.strftime('%H:%M')} — triggering missed report")
+            threading.Thread(target=trigger_report, daemon=True).start()
+    except Exception as e:
+        print(f"[startup] catch-up check error: {e}")
+
+
 def _apply_schedule(cfg: dict) -> None:
     sch = cfg.get("schedule", {})
     hour   = int(sch.get("hour", 7))
@@ -526,6 +556,8 @@ def startup() -> None:
     cfg = load_config()
     _apply_schedule(cfg)
     scheduler.start()
+    # ── Catch-up: if service restarted during the report window, run now ──────
+    _startup_catchup(cfg)
 
 @app.on_event("shutdown")
 def shutdown() -> None:
