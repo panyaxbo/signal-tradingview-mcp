@@ -537,6 +537,85 @@ def _apply_schedule(cfg: dict) -> None:
         replace_existing=True,
     )
 
+# ── Telegram Bot Command Listener ─────────────────────────────────────────────
+# Polls Telegram every 30 s. Only accepts commands from the authorised CHAT_ID.
+# Supported commands:
+#   /run    — trigger daily report now
+#   /status — show whether today's report has been sent
+#   /help   — list commands
+
+_TG_BOT   = "8720452318:AAGgh2WXUW6JFw_Z71eMUBZ0bi-n5eHnwuE"
+_TG_CHAT  = "5636156156"
+_tg_offset: int = 0   # Telegram update offset (avoids re-processing old messages)
+
+
+def _tg_api(method: str, **kwargs) -> dict:
+    payload = json.dumps(kwargs).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{_TG_BOT}/{method}",
+        data=payload, headers={"Content-Type": "application/json"},
+    )
+    try:
+        return json.loads(urllib.request.urlopen(req, timeout=10).read())
+    except Exception:
+        return {}
+
+
+def _tg_reply(text: str) -> None:
+    _tg_api("sendMessage", chat_id=_TG_CHAT, text=text, parse_mode="HTML")
+
+
+def _tg_poll() -> None:
+    """Background thread — polls Telegram for commands every 30 seconds."""
+    global _tg_offset
+    while True:
+        try:
+            res = _tg_api("getUpdates", offset=_tg_offset, timeout=25, allowed_updates=["message"])
+            for upd in res.get("result", []):
+                _tg_offset = upd["update_id"] + 1
+                msg  = upd.get("message", {})
+                text = msg.get("text", "").strip()
+                # Only handle messages from the authorised chat
+                if str(msg.get("chat", {}).get("id", "")) != _TG_CHAT:
+                    continue
+                _handle_tg_command(text)
+        except Exception:
+            pass
+        threading.Event().wait(5)   # 5 s between polls (Telegram long-poll covers the rest)
+
+
+def _handle_tg_command(text: str) -> None:
+    cmd = text.lower().split()[0] if text else ""
+
+    if cmd == "/run":
+        if _running:
+            _tg_reply("⏳ Report กำลังวิ่งอยู่แล้วครับ รอสักครู่...")
+        else:
+            _tg_reply("▶️ กำลัง trigger report ให้เลยครับ...")
+            threading.Thread(target=trigger_report, daemon=True).start()
+
+    elif cmd == "/status":
+        from zoneinfo import ZoneInfo
+        tz    = ZoneInfo("Asia/Bangkok")
+        today = datetime.now(tz).strftime("%Y-%m-%d")
+        sent  = (_last_report_date == today)
+        if sent:
+            _tg_reply(f"✅ Report วันนี้ ({today}) ส่งแล้วครับ")
+        else:
+            _tg_reply(
+                f"❌ Report วันนี้ ({today}) ยังไม่ได้ส่งครับ\n"
+                f"พิม /run เพื่อ trigger ได้เลย"
+            )
+
+    elif cmd == "/help":
+        _tg_reply(
+            "🤖 <b>Bot Commands</b>\n\n"
+            "/run — trigger รายงานตอนนี้เลย\n"
+            "/status — เช็คว่าวันนี้ส่ง report แล้วหรือยัง\n"
+            "/help — แสดง command ทั้งหมด"
+        )
+
+
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="TradingView MCP API",
@@ -558,6 +637,8 @@ def startup() -> None:
     scheduler.start()
     # ── Catch-up: if service restarted during the report window, run now ──────
     _startup_catchup(cfg)
+    # ── Telegram command listener ──────────────────────────────────────────────
+    threading.Thread(target=_tg_poll, daemon=True, name="tg-poll").start()
 
 @app.on_event("shutdown")
 def shutdown() -> None:
