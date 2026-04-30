@@ -552,10 +552,16 @@ def _handle_bot_command(text: str) -> Optional[str]:
 
     # /scan TICKER — scan a single stock for all wave setups
     if cmd == "/scan":
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            return "📋 Usage: /scan AAPL\nScan wave setup สำหรับหุ้น 1 ตัว"
+        parts = text.split()
+        if len(parts) < 2:
+            return "📋 Usage: /scan AAPL [1D|1W]\nเช่น /scan AAPL หรือ /scan AAPL 1W"
         sym = parts[1].strip().upper()
+        # Optional timeframe: /scan AAPL 1W  (default 1D)
+        _TF_MAP = {"1d": "1d", "1w": "1wk", "1wk": "1wk", "1h": "1h"}
+        raw_tf  = parts[2].lower() if len(parts) >= 3 else "1d"
+        yf_tf   = _TF_MAP.get(raw_tf, "1d")
+        tf_label = {"1d": "1D", "1wk": "1W", "1h": "1H"}.get(yf_tf, yf_tf.upper())
+        period   = "2y" if yf_tf in ("1d", "1wk") else "3mo"
         try:
             from tradingview_mcp.core.services.cdc_scanner_service import (
                 detect_wave12_setup, detect_waveab_setup,
@@ -565,8 +571,7 @@ def _handle_bot_command(text: str) -> Optional[str]:
             from tradingview_mcp.core.services.cdc_service import (
                 fetch_ohlcv_yahoo, calculate_ema, get_cdc_zone,
             )
-            # Use 2y for better context (ETFs / newer stocks need more history)
-            closes = fetch_ohlcv_yahoo(sym, period="2y", interval="1d")
+            closes = fetch_ohlcv_yahoo(sym, period=period, interval=yf_tf)
             if not closes:
                 return f"⚠️ ไม่พบข้อมูล {sym}"
 
@@ -579,9 +584,9 @@ def _handle_bot_command(text: str) -> Optional[str]:
             lo52  = min(closes[-252:]) if len(closes) >= 252 else min(closes)
 
             lines = [
-                f"🔍 <b>Wave Scan: {sym}</b>",
-                f"💰 ${cur:,.2f}  ({chg1d:+.2f}% วันนี้)",
-                f"{zone['emoji']} CDC: {zone['zone']}  EMA12:{e12[-1]:,.2f} / EMA26:{e26[-1]:,.2f}",
+                f"🔍 <b>Wave Scan: {sym}</b>  [{tf_label}]",
+                f"💰 ${cur:,.2f}  ({chg1d:+.2f}% candle ล่าสุด)",
+                f"{zone['emoji']} CDC [{tf_label}]: {zone['zone']}  EMA12:{e12[-1]:,.2f} / EMA26:{e26[-1]:,.2f}",
                 f"📏 52W  H:${hi52:,.2f}  L:${lo52:,.2f}",
                 "",
             ]
