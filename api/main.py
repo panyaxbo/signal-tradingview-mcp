@@ -562,70 +562,95 @@ def _handle_bot_command(text: str) -> Optional[str]:
                 detect_wave3_setup,  detect_wavec_setup,
                 detect_wave45_setup, detect_wave45_bear_setup,
             )
-            from tradingview_mcp.core.services.cdc_service import fetch_ohlcv_yahoo
-            closes = fetch_ohlcv_yahoo(sym, period="1y", interval="1d")
+            from tradingview_mcp.core.services.cdc_service import (
+                fetch_ohlcv_yahoo, calculate_ema, get_cdc_zone,
+            )
+            # Use 2y for better context (ETFs / newer stocks need more history)
+            closes = fetch_ohlcv_yahoo(sym, period="2y", interval="1d")
             if not closes:
                 return f"⚠️ ไม่พบข้อมูล {sym}"
 
-            lines = [f"🔍 <b>Wave Scan: {sym}</b>", f"📊 ราคาปัจจุบัน: ${closes[-1]:,.2f}", ""]
+            cur   = closes[-1]
+            e12   = calculate_ema(closes, 12)
+            e26   = calculate_ema(closes, 26)
+            zone  = get_cdc_zone(cur, e12[-1], e26[-1])
+            chg1d = (cur - closes[-2]) / closes[-2] * 100 if len(closes) >= 2 else 0
+            hi52  = max(closes[-252:]) if len(closes) >= 252 else max(closes)
+            lo52  = min(closes[-252:]) if len(closes) >= 252 else min(closes)
+
+            lines = [
+                f"🔍 <b>Wave Scan: {sym}</b>",
+                f"💰 ${cur:,.2f}  ({chg1d:+.2f}% วันนี้)",
+                f"{zone['emoji']} CDC: {zone['zone']}  EMA12:{e12[-1]:,.2f} / EMA26:{e26[-1]:,.2f}",
+                f"📏 52W  H:${hi52:,.2f}  L:${lo52:,.2f}",
+                "",
+            ]
+
             found = False
 
             r = detect_wave3_setup(closes)
             if r:
                 found = True
-                lines.append(f"🚀 <b>Wave 3 Breakout</b>")
-                lines.append(f"   W3: +{r['w3_gain_pct']:.1f}% เหนือ W1 peak ${r['w1_peak']:,.2f}")
-                lines.append(f"   🎯 Target: ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}")
-                lines.append(f"   CDC: {r['cdc_status']}")
-                lines.append("")
+                lines += [
+                    f"🚀 <b>Wave 3 Breakout</b>",
+                    f"   +{r['w3_gain_pct']:.1f}% เหนือ W1 peak ${r['w1_peak']:,.2f}",
+                    f"   🎯 ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             r = detect_wave12_setup(closes)
             if r:
                 found = True
-                lines.append(f"🐂 <b>Wave 1→2 Setup</b>")
-                lines.append(f"   W2 retrace {r['retrace_pct']}% {r['fib_label']}")
-                lines.append(f"   bot: ${r['w1_start']:,.2f}  peak: ${r['w1_peak']:,.2f}")
-                lines.append(f"   CDC: {r['cdc_status']}")
-                lines.append("")
+                lines += [
+                    f"🐂 <b>Wave 1→2 Setup</b>",
+                    f"   W2 retrace {r['retrace_pct']}% {r['fib_label']}",
+                    f"   bot:${r['w1_start']:,.2f}  peak:${r['w1_peak']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             r = detect_wave45_setup(closes)
             if r:
                 found = True
-                lines.append(f"⚡ <b>Wave 4→5 Bull</b>")
-                lines.append(f"   W4 pullback {r['pullback_pct']:.1f}% {r['fib_label']}")
-                lines.append(f"   run: +{r['total_run_pct']:.1f}%  CDC: {r['cdc_status']}")
-                lines.append(f"   🎯 W5 target: ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}")
-                lines.append("")
+                lines += [
+                    f"⚡ <b>Wave 4→5 Bull</b>",
+                    f"   W4 pullback {r['pullback_pct']:.1f}% {r['fib_label']}  run:+{r['total_run_pct']:.1f}%",
+                    f"   🎯 ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             r = detect_wavec_setup(closes)
             if r:
                 found = True
-                lines.append(f"📉 <b>Wave C Breakdown</b>")
-                lines.append(f"   WC: -{r['wc_drop_pct']:.1f}% ต่ำกว่า WA low ${r['wa_bottom']:,.2f}")
-                lines.append(f"   🎯 Target: ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}")
-                lines.append(f"   CDC: {r['cdc_status']}")
-                lines.append("")
+                lines += [
+                    f"📉 <b>Wave C Breakdown</b>",
+                    f"   -{r['wc_drop_pct']:.1f}% ต่ำกว่า WA low ${r['wa_bottom']:,.2f}",
+                    f"   🎯 ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             r = detect_waveab_setup(closes)
             if r:
                 found = True
-                lines.append(f"🐻 <b>Wave A→B Setup</b>")
-                lines.append(f"   WB retrace {r['retrace_pct']}% {r['fib_label']}")
-                lines.append(f"   top: ${r['wa_start']:,.2f}  WA low: ${r['wa_bottom']:,.2f}")
-                lines.append(f"   CDC: {r['cdc_status']}")
-                lines.append("")
+                lines += [
+                    f"🐻 <b>Wave A→B Setup</b>",
+                    f"   WB retrace {r['retrace_pct']}% {r['fib_label']}",
+                    f"   top:${r['wa_start']:,.2f}  WA low:${r['wa_bottom']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             r = detect_wave45_bear_setup(closes)
             if r:
                 found = True
-                lines.append(f"⚡ <b>Wave 4→5 Bear</b>")
-                lines.append(f"   W4 bounce {r['bounce_pct']:.1f}% {r['fib_label']}")
-                lines.append(f"   drop: -{r['total_drop_pct']:.1f}%  CDC: {r['cdc_status']}")
-                lines.append(f"   🎯 W5 target: ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}")
-                lines.append("")
+                lines += [
+                    f"⚡ <b>Wave 4→5 Bear</b>",
+                    f"   W4 bounce {r['bounce_pct']:.1f}% {r['fib_label']}  drop:-{r['total_drop_pct']:.1f}%",
+                    f"   🎯 ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}  CDC:{r['cdc_status']}",
+                    "",
+                ]
 
             if not found:
-                lines.append("ไม่พบ wave setup ตอนนี้")
+                lines.append("📭 ไม่พบ wave setup ที่ match criteria")
+                lines.append("(ต้องการ downtrend/uptrend ≥20% + bounce/drop ≥10%)")
 
             return "\n".join(lines)
         except Exception as e:
@@ -648,18 +673,28 @@ def _telegram_bot_loop() -> None:
     """
     Long-poll Telegram getUpdates in background thread.
     Responds only to CHAT (authorised chat ID).
+    On startup, fast-forward offset to skip old messages (prevent duplicate replies after redeploy).
     """
     global _bot_offset
     import time
     import urllib.parse
+
+    # ── Skip messages that arrived before this process started ────────────────
+    try:
+        url  = f"https://api.telegram.org/bot{BOT}/getUpdates?limit=1&offset=-1"
+        resp = json.loads(urllib.request.urlopen(url, timeout=10).read())
+        updates = resp.get("result", [])
+        if updates:
+            _bot_offset = updates[-1]["update_id"] + 1
+            print(f"[bot] fast-forward offset to {_bot_offset}")
+    except Exception as e:
+        print(f"[bot] offset init error: {e}")
+
     while True:
         try:
-            params = urllib.parse.urlencode({
-                "offset":  _bot_offset,
-                "timeout": 30,
-            })
-            url  = f"https://api.telegram.org/bot{BOT}/getUpdates?{params}"
-            resp = json.loads(urllib.request.urlopen(url, timeout=35).read())
+            params = urllib.parse.urlencode({"offset": _bot_offset, "timeout": 30})
+            url    = f"https://api.telegram.org/bot{BOT}/getUpdates?{params}"
+            resp   = json.loads(urllib.request.urlopen(url, timeout=35).read())
             for update in resp.get("result", []):
                 _bot_offset = update["update_id"] + 1
                 msg     = update.get("message", {})
