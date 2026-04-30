@@ -583,13 +583,55 @@ def _handle_bot_command(text: str) -> Optional[str]:
             hi52  = max(closes[-252:]) if len(closes) >= 252 else max(closes)
             lo52  = min(closes[-252:]) if len(closes) >= 252 else min(closes)
 
+            # ── Dividend info via yfinance history (more reliable than info dict) ──
+            div_line = ""
+            try:
+                import yfinance as yf
+                import pandas as pd
+                tk      = yf.Ticker(sym)
+                divs    = tk.dividends          # Series[date → amount]
+                ex_date = (tk.info or {}).get("exDividendDate")
+
+                if not divs.empty:
+                    one_yr_ago  = pd.Timestamp.now(tz="UTC") - pd.DateOffset(years=1)
+                    recent_divs = divs[divs.index >= one_yr_ago]
+                    n_payments  = len(recent_divs)
+                    annual_div  = float(recent_divs.sum())
+
+                    if n_payments > 0 and annual_div > 0:
+                        monthly_div = annual_div / 12
+                        div_yield   = annual_div / cur * 100 if cur else 0
+
+                        freq_label = {
+                            1:  "ปีละครั้ง",
+                            2:  "ทุก 6 เดือน",
+                            4:  "Quarterly (ทุก 3 เดือน)",
+                            12: "Monthly (ทุกเดือน)",
+                        }.get(n_payments, f"{n_payments}x/ปี")
+
+                        ex_str = ""
+                        if ex_date:
+                            from datetime import datetime, timezone
+                            ex_dt  = datetime.fromtimestamp(ex_date, tz=timezone.utc)
+                            ex_str = f"  |  Ex-div: {ex_dt.strftime('%d %b %Y')}"
+
+                        div_line = (
+                            f"💵 Dividend: ${annual_div:.2f}/ปี  ({div_yield:.1f}%)"
+                            f"  ~${monthly_div:.2f}/เดือน\n"
+                            f"   📅 {freq_label}{ex_str}"
+                        )
+            except Exception:
+                pass
+
             lines = [
                 f"🔍 <b>Wave Scan: {sym}</b>  [{tf_label}]",
                 f"💰 ${cur:,.2f}  ({chg1d:+.2f}% candle ล่าสุด)",
                 f"{zone['emoji']} CDC [{tf_label}]: {zone['zone']}  EMA12:{e12[-1]:,.2f} / EMA26:{e26[-1]:,.2f}",
                 f"📏 52W  H:${hi52:,.2f}  L:${lo52:,.2f}",
-                "",
             ]
+            if div_line:
+                lines.append(div_line)
+            lines.append("")
 
             found = False
 
