@@ -651,12 +651,14 @@ def _telegram_bot_loop() -> None:
     """
     global _bot_offset
     import time
+    import urllib.parse
     while True:
         try:
-            url = (
-                f"https://api.telegram.org/bot{BOT}/getUpdates"
-                f"?offset={_bot_offset}&timeout=30&allowed_updates=[\"message\"]"
-            )
+            params = urllib.parse.urlencode({
+                "offset":  _bot_offset,
+                "timeout": 30,
+            })
+            url  = f"https://api.telegram.org/bot{BOT}/getUpdates?{params}"
             resp = json.loads(urllib.request.urlopen(url, timeout=35).read())
             for update in resp.get("result", []):
                 _bot_offset = update["update_id"] + 1
@@ -672,7 +674,8 @@ def _telegram_bot_loop() -> None:
                 reply = _handle_bot_command(text)
                 if reply:
                     _tg_send(reply)
-        except Exception:
+        except Exception as e:
+            print(f"[bot] poll error: {e}")
             time.sleep(5)
 
 
