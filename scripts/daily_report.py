@@ -278,16 +278,19 @@ for item in AI_TARGETS:
     print(f"Step 3 {lbl} done")
 
 
-# ── STEP 4 — Wave 1→2 (Bullish) + Wave A→B (Bearish) Setup Scanner ────────────
+# ── STEP 4 — Full Elliott Wave Scanner (all 6 patterns, download once) ────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_both_setups, format_wave12_section, format_waveab_section,
+    scan_all_setups,
+    format_wave12_section, format_waveab_section,
+    format_wave3_section,  format_wavec_section,
+    format_wave45_section, format_wave45_bear_section,
     DOW_30, NASDAQ_100, SP_500_EXTRA,
 )
 
 cdc_cfg = CFG.get("cdc_scanner", {})
 
 if cdc_cfg.get("wave12", True):
-    send("📐 <b>Wave 1→2 + Wave A→B Scanner</b>\n⏳ กำลัง scan (ใช้ข้อมูล 1 ปี)...")
+    send("📐 <b>Elliott Wave Scanner</b>\n⏳ กำลัง scan 6 patterns (ใช้ข้อมูล 1 ปี)...")
 
     scan_universe: list[str] = []
     if cdc_cfg.get("dow30",     True): scan_universe += DOW_30
@@ -295,17 +298,16 @@ if cdc_cfg.get("wave12", True):
     if cdc_cfg.get("sp500",     True): scan_universe += SP_500_EXTRA
     scan_universe = sorted(set(scan_universe))
 
-    # ── Scan both directions in ONE pass (download data only once) ───────────
-    w12_results: list = []
-    wab_results: list = []
-    if scan_universe:
-        w12_results, wab_results = scan_both_setups(symbols=scan_universe, period="1y")
+    w12_results = wab_results = w3_results = wc_results = w45_results = w45b_results = []
 
+    if scan_universe:
+        # Download ONCE → detect all 6 patterns in a single pass
+        w12_results, wab_results, w3_results, wc_results, w45_results, w45b_results = \
+            scan_all_setups(symbols=scan_universe, period="1y")
+
+        # ── Wave 1→2 (Bottoming setup, bullish) ──────────────────────────────
         w12_ready = [r for r in w12_results if r["cdc_status"] in ("fresh_cross", "just_crossed")]
         w12_watch = [r for r in w12_results if r["cdc_status"] in ("watch", "bullish")]
-        wab_ready = [r for r in wab_results if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
-        wab_watch = [r for r in wab_results if r["cdc_status"] in ("watch_bear", "bearish")]
-
         send(format_wave12_section(
             f"🐂 WAVE 1→2 — CDC CONFIRMED ({len(w12_ready)} ตัว)",
             w12_ready,
@@ -316,6 +318,10 @@ if cdc_cfg.get("wave12", True):
             w12_watch,
             no_signal_text="ไม่มี Wave 1→2 ที่กำลัง form วันนี้",
         ))
+
+        # ── Wave A→B (Topping setup, bearish) ────────────────────────────────
+        wab_ready = [r for r in wab_results if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
+        wab_watch = [r for r in wab_results if r["cdc_status"] in ("watch_bear", "bearish")]
         send(format_waveab_section(
             f"🐻 WAVE A→B — CDC CONFIRMED ({len(wab_ready)} ตัว)",
             wab_ready,
@@ -327,7 +333,59 @@ if cdc_cfg.get("wave12", True):
             no_signal_text="ไม่มี Wave A→B ที่กำลัง form วันนี้",
         ))
 
-    # ── Sync both to watchlist API ────────────────────────────────────────────
+        # ── Wave 3 Breakout (bull) + Wave C Breakdown (bear) ─────────────────
+        w3_cdc   = [r for r in w3_results  if r["cdc_status"] in ("fresh_cross", "just_crossed")]
+        w3_bull  = [r for r in w3_results  if r["cdc_status"] in ("bullish", "watch")]
+        wc_cdc   = [r for r in wc_results  if r["cdc_status"] in ("fresh_cross_down", "just_crossed_down")]
+        wc_bear  = [r for r in wc_results  if r["cdc_status"] in ("bearish", "watch_bear")]
+        send(format_wave3_section(
+            f"🚀 WAVE 3 BREAKOUT — CDC ({len(w3_cdc)} ตัว)",
+            w3_cdc,
+            no_signal_text="ไม่มี Wave 3 breakout ที่ CDC confirm วันนี้",
+        ))
+        send(format_wave3_section(
+            f"🚀 WAVE 3 BREAKOUT — IN PROGRESS ({len(w3_bull)} ตัว)",
+            w3_bull,
+            no_signal_text="ไม่มี Wave 3 ที่กำลัง run วันนี้",
+        ))
+        send(format_wavec_section(
+            f"📉 WAVE C BREAKDOWN — CDC ({len(wc_cdc)} ตัว)",
+            wc_cdc,
+            no_signal_text="ไม่มี Wave C breakdown ที่ CDC confirm วันนี้",
+        ))
+        send(format_wavec_section(
+            f"📉 WAVE C BREAKDOWN — IN PROGRESS ({len(wc_bear)} ตัว)",
+            wc_bear,
+            no_signal_text="ไม่มี Wave C ที่กำลัง run วันนี้",
+        ))
+
+        # ── Wave 4→5 (bull) + Wave 4→5 Bear ─────────────────────────────────
+        w45_entry = [r for r in w45_results  if r["cdc_status"] in ("w5_starting", "w5_confirmed")]
+        w45_wait  = [r for r in w45_results  if r["cdc_status"] in ("w4_fresh", "in_w4", "watch")]
+        w45b_entry = [r for r in w45b_results if r["cdc_status"] in ("w5_starting", "w5_confirmed")]
+        w45b_wait  = [r for r in w45b_results if r["cdc_status"] in ("w4_fresh", "in_w4_bounce", "watch_bear")]
+        send(format_wave45_section(
+            f"⚡ WAVE 4→5 BULL — W5 STARTING ({len(w45_entry)} ตัว)",
+            w45_entry,
+            no_signal_text="ไม่มี Wave 5 bull ที่กำลังเริ่มวันนี้",
+        ))
+        send(format_wave45_section(
+            f"⚡ WAVE 4→5 BULL — IN W4 PULLBACK ({len(w45_wait)} ตัว)",
+            w45_wait,
+            no_signal_text="ไม่มี Wave 4 pullback setup วันนี้",
+        ))
+        send(format_wave45_bear_section(
+            f"⚡ WAVE 4→5 BEAR — W5 STARTING ({len(w45b_entry)} ตัว)",
+            w45b_entry,
+            no_signal_text="ไม่มี Wave 5 bear ที่กำลังเริ่มวันนี้",
+        ))
+        send(format_wave45_bear_section(
+            f"⚡ WAVE 4→5 BEAR — IN W4 BOUNCE ({len(w45b_wait)} ตัว)",
+            w45b_wait,
+            no_signal_text="ไม่มี Wave 4 bear bounce setup วันนี้",
+        ))
+
+    # ── Sync W1→2 + WA→B to watchlist API (tracks invalidation & confirmation) ─
     all_wave_results = w12_results + wab_results
     if all_wave_results:
         payload = json.dumps(all_wave_results, ensure_ascii=False).encode()

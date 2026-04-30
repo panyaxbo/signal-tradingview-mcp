@@ -792,3 +792,641 @@ def format_waveab_section(
             )
             lines.append("")
     return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Wave 3 Breakout Scanner — Bull
+# Condition: prior downtrend → W1 bounce → W2 retrace → price now > W1 peak
+# This is the strongest wave — breakout momentum in progress.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_wave3_setup(
+    closes: list[float],
+    min_wave1_pct: float = 0.08,
+    min_downtrend_pct: float = 0.20,
+    downtrend_lookback: int = 120,
+    bottom_lookback: int = 90,
+    min_days_since_bottom: int = 5,
+) -> Optional[dict]:
+    """
+    Detect Wave 3 — price broke ABOVE W1 peak (W2 complete, W3 breakout confirmed).
+    Same initial structure as detect_wave12_setup but cur > w1_peak.
+
+    Extension targets from w1_peak using W1 range as unit:
+      ext_100 = w1_peak + 1.0 × W1   ← minimum W3 target
+      ext_162 = w1_peak + 1.618 × W1 ← typical W3 target
+      ext_200 = w1_peak + 2.0 × W1
+      ext_262 = w1_peak + 2.618 × W1 ← extended W3
+    """
+    min_len = downtrend_lookback + bottom_lookback + 10
+    if len(closes) < min_len:
+        return None
+
+    e12 = calculate_ema(closes, 12)
+    e26 = calculate_ema(closes, 26)
+    e50 = calculate_ema(closes, 50)
+
+    # 1. Prior downtrend
+    e50_trend_start = e50[-(downtrend_lookback + bottom_lookback)]
+    e50_at_bottom   = min(e50[-bottom_lookback:])
+    if e50_trend_start <= 0:
+        return None
+    downtrend_pct = (e50_trend_start - e50_at_bottom) / e50_trend_start
+    if downtrend_pct < min_downtrend_pct:
+        return None
+
+    # 2. Absolute bottom
+    search        = closes[-bottom_lookback:]
+    bot_local_idx = search.index(min(search))
+    w1_start      = search[bot_local_idx]
+    days_since_bot = len(search) - 1 - bot_local_idx
+    if days_since_bot < min_days_since_bottom:
+        return None
+
+    # 3. W1 peak (highest close after bottom)
+    post_bottom = search[bot_local_idx + 1:]
+    if not post_bottom:
+        return None
+    w1_peak     = max(post_bottom)
+    wave1_range = w1_peak - w1_start
+    wave1_gain  = wave1_range / w1_start if w1_start > 0 else 0
+    if wave1_gain < min_wave1_pct:
+        return None
+
+    # 4. Wave 3 check: cur must be ABOVE w1_peak
+    cur = closes[-1]
+    if cur <= w1_peak:
+        return None  # Still in W2 territory
+
+    w3_gain_pct = (cur - w1_peak) / w1_peak
+
+    ext_100 = w1_peak + 1.000 * wave1_range
+    ext_162 = w1_peak + 1.618 * wave1_range
+    ext_200 = w1_peak + 2.000 * wave1_range
+    ext_262 = w1_peak + 2.618 * wave1_range
+
+    # 5. CDC status
+    ema_bull = [e12[i] > e26[i] for i in [-3, -2, -1]]
+    if   ema_bull[-1] and not ema_bull[-2]:
+        cdc_status = "fresh_cross"
+    elif ema_bull[-1] and not ema_bull[-3]:
+        cdc_status = "just_crossed"
+    elif ema_bull[-1]:
+        cdc_status = "bullish"
+    else:
+        cdc_status = "watch"
+
+    cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
+
+    return {
+        "direction":      "bull_w3",
+        "downtrend_pct":  round(downtrend_pct * 100, 1),
+        "w1_start":       round(w1_start, 4),
+        "w1_peak":        round(w1_peak, 4),
+        "wave1_gain_pct": round(wave1_gain * 100, 1),
+        "w3_gain_pct":    round(w3_gain_pct * 100, 1),
+        "current_price":  round(cur, 4),
+        "ext_100":        round(ext_100, 4),
+        "ext_162":        round(ext_162, 4),
+        "ext_200":        round(ext_200, 4),
+        "ext_262":        round(ext_262, 4),
+        "cdc_status":     cdc_status,
+        "cdc_zone":       cdc_zone,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Wave C Breakdown Scanner — Bear (mirror of Wave 3)
+# Condition: prior uptrend → WA drop → WB bounce → price now < WA bottom
+# ABC corrective: WC is the final leg down (often equals or extends WA).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_wavec_setup(
+    closes: list[float],
+    min_wavea_pct: float = 0.08,
+    min_uptrend_pct: float = 0.20,
+    uptrend_lookback: int = 120,
+    top_lookback: int = 90,
+    min_days_since_top: int = 5,
+) -> Optional[dict]:
+    """
+    Detect Wave C — price broke BELOW WA bottom (WB complete, WC breakdown confirmed).
+    Mirror of detect_wave3_setup.
+
+    Extension targets from wa_bottom using WA range as unit:
+      ext_100 = wa_bottom − 1.0 × WA   ← min WC target
+      ext_162 = wa_bottom − 1.618 × WA ← typical WC target
+      ext_200 = wa_bottom − 2.0 × WA
+      ext_262 = wa_bottom − 2.618 × WA ← extended WC
+    """
+    min_len = uptrend_lookback + top_lookback + 10
+    if len(closes) < min_len:
+        return None
+
+    e12 = calculate_ema(closes, 12)
+    e26 = calculate_ema(closes, 26)
+    e50 = calculate_ema(closes, 50)
+
+    # 1. Prior uptrend
+    e50_trend_start = e50[-(uptrend_lookback + top_lookback)]
+    e50_at_top      = max(e50[-top_lookback:])
+    if e50_trend_start <= 0:
+        return None
+    uptrend_pct = (e50_at_top - e50_trend_start) / e50_trend_start
+    if uptrend_pct < min_uptrend_pct:
+        return None
+
+    # 2. Absolute top
+    search        = closes[-top_lookback:]
+    top_local_idx = search.index(max(search))
+    wa_start      = search[top_local_idx]
+    days_since_top = len(search) - 1 - top_local_idx
+    if days_since_top < min_days_since_top:
+        return None
+
+    # 3. WA bottom (lowest close after top)
+    post_top = search[top_local_idx + 1:]
+    if not post_top:
+        return None
+    wa_bottom   = min(post_top)
+    wavea_range = wa_start - wa_bottom
+    wavea_drop  = wavea_range / wa_start if wa_start > 0 else 0
+    if wavea_drop < min_wavea_pct:
+        return None
+
+    # 4. Wave C check: cur must be BELOW wa_bottom
+    cur = closes[-1]
+    if cur >= wa_bottom:
+        return None  # Still in WB territory
+
+    wc_drop_pct = (wa_bottom - cur) / wa_bottom
+
+    ext_100 = wa_bottom - 1.000 * wavea_range
+    ext_162 = wa_bottom - 1.618 * wavea_range
+    ext_200 = wa_bottom - 2.000 * wavea_range
+    ext_262 = wa_bottom - 2.618 * wavea_range
+
+    # 5. CDC status (bearish)
+    ema_bear = [e12[i] < e26[i] for i in [-3, -2, -1]]
+    if   ema_bear[-1] and not ema_bear[-2]:
+        cdc_status = "fresh_cross_down"
+    elif ema_bear[-1] and not ema_bear[-3]:
+        cdc_status = "just_crossed_down"
+    elif ema_bear[-1]:
+        cdc_status = "bearish"
+    else:
+        cdc_status = "watch_bear"
+
+    cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
+
+    return {
+        "direction":      "bear_wc",
+        "uptrend_pct":    round(uptrend_pct * 100, 1),
+        "wa_start":       round(wa_start, 4),
+        "wa_bottom":      round(wa_bottom, 4),
+        "wavea_drop_pct": round(wavea_drop * 100, 1),
+        "wc_drop_pct":    round(wc_drop_pct * 100, 1),
+        "current_price":  round(cur, 4),
+        "ext_100":        round(ext_100, 4),
+        "ext_162":        round(ext_162, 4),
+        "ext_200":        round(ext_200, 4),
+        "ext_262":        round(ext_262, 4),
+        "cdc_status":     cdc_status,
+        "cdc_zone":       cdc_zone,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Wave 4→5 Setup Scanner — Bull
+# Condition: big impulse run (W1+W3 ≥35%), now shallow W4 pullback 20-50%
+# Best entry: when W4 ends and CDC crosses back up → W5 launch
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_wave45_setup(
+    closes: list[float],
+    min_total_run_pct: float = 0.35,    # W1+W3 combined run ≥35% from bottom
+    min_downtrend_pct: float = 0.15,    # Prior context downtrend ≥15%
+    downtrend_lookback: int = 120,
+    bottom_lookback: int = 90,
+    min_days_since_bottom: int = 10,
+) -> Optional[dict]:
+    """
+    Detect W4→5 bull: big prior impulse (≥35%), now in shallow W4 pullback (20-50%).
+    W4 must hold above 40% of total run from bottom (non-overlap rule with W1).
+
+    cdc_status values:
+      w5_starting  — EMA12 just crossed UP → W5 beginning (best entry)
+      w5_confirmed — cross 1 candle ago, W5 holding
+      w4_fresh     — EMA12 just crossed DOWN → W4 just started (wait for bounce)
+      in_w4        — in W4 pullback
+      watch        — bullish but watch for W4 to develop
+    """
+    min_len = downtrend_lookback + bottom_lookback + 10
+    if len(closes) < min_len:
+        return None
+
+    e12 = calculate_ema(closes, 12)
+    e26 = calculate_ema(closes, 26)
+    e50 = calculate_ema(closes, 50)
+
+    # 1. Prior downtrend context
+    e50_trend_start = e50[-(downtrend_lookback + bottom_lookback)]
+    e50_at_bottom   = min(e50[-bottom_lookback:])
+    if e50_trend_start <= 0:
+        return None
+    downtrend_pct = (e50_trend_start - e50_at_bottom) / e50_trend_start
+    if downtrend_pct < min_downtrend_pct:
+        return None
+
+    # 2. Absolute bottom
+    search        = closes[-bottom_lookback:]
+    bot_local_idx = search.index(min(search))
+    w_bottom      = search[bot_local_idx]
+    days_since_bot = len(search) - 1 - bot_local_idx
+    if days_since_bot < min_days_since_bottom:
+        return None
+
+    # 3. Total run high (W3 peak) — highest after bottom
+    post_bottom = search[bot_local_idx + 1:]
+    if len(post_bottom) < 10:
+        return None
+    run_high      = max(post_bottom)
+    total_run     = run_high - w_bottom
+    total_run_pct = total_run / w_bottom if w_bottom > 0 else 0
+    if total_run_pct < min_total_run_pct:
+        return None
+
+    # 4. W4 pullback check
+    cur = closes[-1]
+    if cur <= w_bottom:
+        return None
+
+    pullback_pct = (run_high - cur) / total_run if total_run > 0 else 0
+    if not (0.20 <= pullback_pct <= 0.50):
+        return None
+
+    # W4 must stay above 40% of total run (non-overlap rule)
+    w4_floor = w_bottom + 0.40 * total_run
+    if cur <= w4_floor:
+        return None
+
+    fib_236 = run_high - 0.236 * total_run
+    fib_382 = run_high - 0.382 * total_run
+    fib_500 = run_high - 0.500 * total_run
+
+    fib_label = (
+        "~23.6%" if pullback_pct < 0.30 else
+        "~38.2%" if pullback_pct < 0.44 else
+        "~50.0%"
+    )
+
+    w5_target_min = run_high + 0.236 * total_run
+    w5_target_std = run_high + 0.382 * total_run
+
+    # 5. CDC status
+    ema_bull = [e12[i] > e26[i] for i in [-3, -2, -1]]
+    if   ema_bull[-1] and not ema_bull[-2]:
+        cdc_status = "w5_starting"
+    elif ema_bull[-1] and not ema_bull[-3]:
+        cdc_status = "w5_confirmed"
+    elif not ema_bull[-1] and ema_bull[-2]:
+        cdc_status = "w4_fresh"
+    elif not ema_bull[-1]:
+        cdc_status = "in_w4"
+    else:
+        cdc_status = "watch"
+
+    cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
+
+    return {
+        "direction":      "bull_w45",
+        "downtrend_pct":  round(downtrend_pct * 100, 1),
+        "w_bottom":       round(w_bottom, 4),
+        "run_high":       round(run_high, 4),
+        "total_run_pct":  round(total_run_pct * 100, 1),
+        "pullback_pct":   round(pullback_pct * 100, 1),
+        "fib_label":      fib_label,
+        "fib_236":        round(fib_236, 4),
+        "fib_382":        round(fib_382, 4),
+        "fib_500":        round(fib_500, 4),
+        "w5_target_min":  round(w5_target_min, 4),
+        "w5_target_std":  round(w5_target_std, 4),
+        "current_price":  round(cur, 4),
+        "cdc_status":     cdc_status,
+        "cdc_zone":       cdc_zone,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Wave 4→5 Bear Setup Scanner (mirror of bull W4→5)
+# Condition: big drop (WA+WC ≥35%), now in shallow W4-bear bounce 20-50%
+# Best entry: when bounce ends and CDC crosses back DOWN → W5-bear continues
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_wave45_bear_setup(
+    closes: list[float],
+    min_total_drop_pct: float = 0.35,
+    min_uptrend_pct: float = 0.15,
+    uptrend_lookback: int = 120,
+    top_lookback: int = 90,
+    min_days_since_top: int = 10,
+) -> Optional[dict]:
+    """
+    Detect W4→5 bear: big prior drop (≥35%), now in shallow W4-bear bounce (20-50%).
+    Bounce must stay below 60% from top (non-overlap rule).
+
+    cdc_status values:
+      w5_starting  — EMA12 just crossed DOWN → W5-bear beginning (best entry)
+      w5_confirmed — cross 1 candle ago, W5-bear holding
+      w4_fresh     — EMA12 just crossed UP → W4-bounce just started (wait)
+      in_w4_bounce — in W4 bounce
+      watch_bear   — bearish context, watching
+    """
+    min_len = uptrend_lookback + top_lookback + 10
+    if len(closes) < min_len:
+        return None
+
+    e12 = calculate_ema(closes, 12)
+    e26 = calculate_ema(closes, 26)
+    e50 = calculate_ema(closes, 50)
+
+    # 1. Prior uptrend context
+    e50_trend_start = e50[-(uptrend_lookback + top_lookback)]
+    e50_at_top      = max(e50[-top_lookback:])
+    if e50_trend_start <= 0:
+        return None
+    uptrend_pct = (e50_at_top - e50_trend_start) / e50_trend_start
+    if uptrend_pct < min_uptrend_pct:
+        return None
+
+    # 2. Absolute top
+    search        = closes[-top_lookback:]
+    top_local_idx = search.index(max(search))
+    w_top         = search[top_local_idx]
+    days_since_top = len(search) - 1 - top_local_idx
+    if days_since_top < min_days_since_top:
+        return None
+
+    # 3. Total drop low (W3-bear low)
+    post_top = search[top_local_idx + 1:]
+    if len(post_top) < 10:
+        return None
+    drop_low       = min(post_top)
+    total_drop     = w_top - drop_low
+    total_drop_pct = total_drop / w_top if w_top > 0 else 0
+    if total_drop_pct < min_total_drop_pct:
+        return None
+
+    # 4. W4-bear bounce check
+    cur = closes[-1]
+    if cur >= w_top:
+        return None
+
+    bounce_pct = (cur - drop_low) / total_drop if total_drop > 0 else 0
+    if not (0.20 <= bounce_pct <= 0.50):
+        return None
+
+    # Bounce must stay below 60% from top (non-overlap rule)
+    w4_ceil = w_top - 0.40 * total_drop
+    if cur >= w4_ceil:
+        return None
+
+    fib_236 = drop_low + 0.236 * total_drop
+    fib_382 = drop_low + 0.382 * total_drop
+    fib_500 = drop_low + 0.500 * total_drop
+
+    fib_label = (
+        "~23.6%" if bounce_pct < 0.30 else
+        "~38.2%" if bounce_pct < 0.44 else
+        "~50.0%"
+    )
+
+    w5_target_min = drop_low - 0.236 * total_drop
+    w5_target_std = drop_low - 0.382 * total_drop
+
+    # 5. CDC status
+    ema_bear = [e12[i] < e26[i] for i in [-3, -2, -1]]
+    if   ema_bear[-1] and not ema_bear[-2]:
+        cdc_status = "w5_starting"
+    elif ema_bear[-1] and not ema_bear[-3]:
+        cdc_status = "w5_confirmed"
+    elif not ema_bear[-1] and ema_bear[-2]:
+        cdc_status = "w4_fresh"
+    elif not ema_bear[-1]:
+        cdc_status = "in_w4_bounce"
+    else:
+        cdc_status = "watch_bear"
+
+    cdc_zone = get_cdc_zone(cur, e12[-1], e26[-1])
+
+    return {
+        "direction":      "bear_w45",
+        "uptrend_pct":    round(uptrend_pct * 100, 1),
+        "w_top":          round(w_top, 4),
+        "drop_low":       round(drop_low, 4),
+        "total_drop_pct": round(total_drop_pct * 100, 1),
+        "bounce_pct":     round(bounce_pct * 100, 1),
+        "fib_label":      fib_label,
+        "fib_236":        round(fib_236, 4),
+        "fib_382":        round(fib_382, 4),
+        "fib_500":        round(fib_500, 4),
+        "w5_target_min":  round(w5_target_min, 4),
+        "w5_target_std":  round(w5_target_std, 4),
+        "current_price":  round(cur, 4),
+        "cdc_status":     cdc_status,
+        "cdc_zone":       cdc_zone,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# scan_all_setups — download once, detect all 6 wave patterns
+# ══════════════════════════════════════════════════════════════════════════════
+
+def scan_all_setups(
+    symbols: list[str] | None = None,
+    period: str = "1y",
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    """
+    Download data ONCE, then detect all 6 wave patterns in a single pass.
+    6× cheaper than running each scan separately.
+
+    Returns:
+        (w12_bull, wab_bear, w3_bull, wc_bear, w45_bull, w45_bear)
+    """
+    if symbols is None:
+        symbols = get_all_index_symbols()
+
+    closes_map: dict[str, list[float]] = {}
+    try:
+        closes_map = _batch_fetch_closes(symbols, period=period, chunk_size=220)
+    except Exception:
+        pass
+
+    w12_results:  list[dict] = []
+    wab_results:  list[dict] = []
+    w3_results:   list[dict] = []
+    wc_results:   list[dict] = []
+    w45_results:  list[dict] = []
+    w45b_results: list[dict] = []
+
+    _detectors = [
+        (detect_wave12_setup,      w12_results),
+        (detect_waveab_setup,      wab_results),
+        (detect_wave3_setup,       w3_results),
+        (detect_wavec_setup,       wc_results),
+        (detect_wave45_setup,      w45_results),
+        (detect_wave45_bear_setup, w45b_results),
+    ]
+
+    for sym, closes in closes_map.items():
+        for detector, bucket in _detectors:
+            try:
+                r = detector(closes)
+                if r:
+                    r["ticker"] = sym
+                    r["label"]  = sym
+                    bucket.append(r)
+            except Exception:
+                pass
+
+    # ── Sort each bucket ───────────────────────────────────────────────────────
+    _pri_bull  = {"fresh_cross": 0, "just_crossed": 1, "watch": 2, "bullish": 3}
+    _pri_bear  = {"fresh_cross_down": 0, "just_crossed_down": 1, "watch_bear": 2, "bearish": 3}
+    _pri_w45   = {"w5_starting": 0, "w5_confirmed": 1, "w4_fresh": 2, "in_w4": 3, "watch": 4}
+    _pri_w45b  = {"w5_starting": 0, "w5_confirmed": 1, "w4_fresh": 2, "in_w4_bounce": 3, "watch_bear": 4}
+
+    w12_results.sort(key=lambda x: (_pri_bull.get(x["cdc_status"], 9),  -x["retrace_pct"]))
+    wab_results.sort(key=lambda x: (_pri_bear.get(x["cdc_status"], 9),  -x["retrace_pct"]))
+    w3_results.sort( key=lambda x: (_pri_bull.get(x["cdc_status"], 9),  -x["w3_gain_pct"]))
+    wc_results.sort( key=lambda x: (_pri_bear.get(x["cdc_status"], 9),  -x["wc_drop_pct"]))
+    w45_results.sort(key=lambda x: (_pri_w45.get(x["cdc_status"],  9),  -x["total_run_pct"]))
+    w45b_results.sort(key=lambda x: (_pri_w45b.get(x["cdc_status"], 9), -x["total_drop_pct"]))
+
+    return w12_results, wab_results, w3_results, wc_results, w45_results, w45b_results
+
+
+# ── Wave 3 / WC / W4→5 Telegram Formatters ────────────────────────────────────
+
+_W3_CDC_LABEL = {
+    "fresh_cross":  "🆕 CDC เพิ่ง cross bullish!",
+    "just_crossed": "2️⃣ CDC cross เมื่อวาน",
+    "bullish":      "✅ CDC bullish",
+    "watch":        "⏳ รอ CDC confirm",
+}
+
+_WC_CDC_LABEL = {
+    "fresh_cross_down":  "🆕 CDC เพิ่ง cross bearish!",
+    "just_crossed_down": "2️⃣ CDC cross ลงเมื่อวาน",
+    "bearish":           "🔴 CDC bearish",
+    "watch_bear":        "⏳ รอ CDC confirm ลง",
+}
+
+_W45_CDC_LABEL = {
+    "w5_starting":  "🚀 W5 กำลังเริ่ม! CDC cross ขึ้น",
+    "w5_confirmed": "✅ W5 confirm (candle 2)",
+    "w4_fresh":     "🔄 W4 เพิ่งเริ่ม รอ bounce จบ",
+    "in_w4":        "⏳ อยู่ใน W4 pullback",
+    "watch":        "👀 เฝ้าดู",
+}
+
+_W45B_CDC_LABEL = {
+    "w5_starting":   "📉 W5-bear กำลังเริ่ม! CDC cross ลง",
+    "w5_confirmed":  "✅ W5-bear confirm (candle 2)",
+    "w4_fresh":      "🔄 W4-bounce เพิ่งเริ่ม รอ bounce จบ",
+    "in_w4_bounce":  "⏳ อยู่ใน W4 bounce",
+    "watch_bear":    "👀 เฝ้าดู",
+}
+
+
+def format_wave3_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่มี Wave 3 breakout วันนี้",
+) -> str:
+    """Format Wave 3 bull breakouts (compact 2-line)."""
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+    else:
+        for r in results:
+            zone = r["cdc_zone"]
+            cdc  = _W3_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  W3:+{r['w3_gain_pct']:.1f}%"
+                f"  🎯${r['ext_162']:,.2f}/${r['ext_262']:,.2f}\n"
+                f"   ↓{r['downtrend_pct']}% W1+{r['wave1_gain_pct']}%"
+                f"  bot:${r['w1_start']:,.2f}  {cdc}"
+            )
+            lines.append("")
+    return "\n".join(lines)
+
+
+def format_wavec_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่มี Wave C breakdown วันนี้",
+) -> str:
+    """Format Wave C bear breakdowns (compact 2-line)."""
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+    else:
+        for r in results:
+            zone = r["cdc_zone"]
+            cdc  = _WC_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  WC:-{r['wc_drop_pct']:.1f}%"
+                f"  🎯${r['ext_162']:,.2f}/${r['ext_262']:,.2f}\n"
+                f"   ↑{r['uptrend_pct']}% WA-{r['wavea_drop_pct']}%"
+                f"  top:${r['wa_start']:,.2f}  {cdc}"
+            )
+            lines.append("")
+    return "\n".join(lines)
+
+
+def format_wave45_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่มี Wave 4→5 setup วันนี้",
+) -> str:
+    """Format Wave 4→5 bull setups (compact 2-line)."""
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+    else:
+        for r in results:
+            zone = r["cdc_zone"]
+            cdc  = _W45_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  W4:{r['pullback_pct']:.1f}% {r['fib_label']}"
+                f"  🎯${r['w5_target_min']:,.2f}/${r['w5_target_std']:,.2f}\n"
+                f"   run+{r['total_run_pct']:.1f}%  bot:${r['w_bottom']:,.2f}  {cdc}"
+            )
+            lines.append("")
+    return "\n".join(lines)
+
+
+def format_wave45_bear_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่มี Wave 4→5 Bear setup วันนี้",
+) -> str:
+    """Format Wave 4→5 bear setups (compact 2-line)."""
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+    else:
+        for r in results:
+            zone = r["cdc_zone"]
+            cdc  = _W45B_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{r['label']}</b>  ${r['current_price']:,.2f}"
+                f"  W4b:{r['bounce_pct']:.1f}% {r['fib_label']}"
+                f"  🎯${r['w5_target_min']:,.2f}/${r['w5_target_std']:,.2f}\n"
+                f"   drop-{r['total_drop_pct']:.1f}%  top:${r['w_top']:,.2f}  {cdc}"
+            )
+            lines.append("")
+    return "\n".join(lines)

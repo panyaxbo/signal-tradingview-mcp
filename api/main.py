@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from typing import Any
+from typing import Any, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -509,6 +509,173 @@ def _startup_catchup(cfg: dict) -> None:
         print(f"[startup] catch-up check error: {e}")
 
 
+# ── Telegram Bot Commands ──────────────────────────────────────────────────────
+
+_bot_offset: int = 0
+
+
+def _handle_bot_command(text: str) -> Optional[str]:
+    """
+    Parse and execute a Telegram bot command.
+    Returns reply string, or None if unrecognised.
+    """
+    text = text.strip()
+    cmd  = text.lower().split()[0] if text else ""
+
+    # /run — trigger daily report
+    if cmd == "/run":
+        if _running:
+            return "⏳ Report กำลังรันอยู่แล้วครับ รอสักครู่..."
+        trigger_report()
+        return "🚀 เริ่ม Daily Report แล้วครับ!\nจะได้รับ Telegram เร็วๆ นี้ 📱"
+
+    # /status — check today's report status
+    if cmd == "/status":
+        from zoneinfo import ZoneInfo
+        tz  = ZoneInfo("Asia/Bangkok")
+        now = datetime.now(tz)
+        today_bkk = now.strftime("%Y-%m-%d")
+        # Compare with _last_report_date (UTC date, close enough for same-day check)
+        sent = "✅ ส่งแล้ววันนี้" if _last_report_date == datetime.utcnow().strftime("%Y-%m-%d") else "❌ ยังไม่ได้ส่งวันนี้"
+        running_str = "⏳ กำลังรันอยู่..." if _running else "💤 ไม่ได้รัน"
+        job = scheduler.get_job("daily_report")
+        nxt = str(job.next_run_time)[:19] if job else "ไม่พบ job"
+        log_tail = list(_run_log)[-3:] if _run_log else []
+        log_str  = "\n".join(f"  {l}" for l in log_tail) if log_tail else "  (ว่าง)"
+        return (
+            f"📊 <b>Status</b>\n"
+            f"🗓 วันนี้ ({today_bkk}): {sent}\n"
+            f"{running_str}\n"
+            f"⏰ Next run: {nxt}\n"
+            f"📋 Log ล่าสุด:\n{log_str}"
+        )
+
+    # /scan TICKER — scan a single stock for all wave setups
+    if cmd == "/scan":
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            return "📋 Usage: /scan AAPL\nScan wave setup สำหรับหุ้น 1 ตัว"
+        sym = parts[1].strip().upper()
+        try:
+            from tradingview_mcp.core.services.cdc_scanner_service import (
+                detect_wave12_setup, detect_waveab_setup,
+                detect_wave3_setup,  detect_wavec_setup,
+                detect_wave45_setup, detect_wave45_bear_setup,
+            )
+            from tradingview_mcp.core.services.cdc_service import fetch_ohlcv_yahoo
+            closes = fetch_ohlcv_yahoo(sym, period="1y", interval="1d")
+            if not closes:
+                return f"⚠️ ไม่พบข้อมูล {sym}"
+
+            lines = [f"🔍 <b>Wave Scan: {sym}</b>", f"📊 ราคาปัจจุบัน: ${closes[-1]:,.2f}", ""]
+            found = False
+
+            r = detect_wave3_setup(closes)
+            if r:
+                found = True
+                lines.append(f"🚀 <b>Wave 3 Breakout</b>")
+                lines.append(f"   W3: +{r['w3_gain_pct']:.1f}% เหนือ W1 peak ${r['w1_peak']:,.2f}")
+                lines.append(f"   🎯 Target: ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}")
+                lines.append(f"   CDC: {r['cdc_status']}")
+                lines.append("")
+
+            r = detect_wave12_setup(closes)
+            if r:
+                found = True
+                lines.append(f"🐂 <b>Wave 1→2 Setup</b>")
+                lines.append(f"   W2 retrace {r['retrace_pct']}% {r['fib_label']}")
+                lines.append(f"   bot: ${r['w1_start']:,.2f}  peak: ${r['w1_peak']:,.2f}")
+                lines.append(f"   CDC: {r['cdc_status']}")
+                lines.append("")
+
+            r = detect_wave45_setup(closes)
+            if r:
+                found = True
+                lines.append(f"⚡ <b>Wave 4→5 Bull</b>")
+                lines.append(f"   W4 pullback {r['pullback_pct']:.1f}% {r['fib_label']}")
+                lines.append(f"   run: +{r['total_run_pct']:.1f}%  CDC: {r['cdc_status']}")
+                lines.append(f"   🎯 W5 target: ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}")
+                lines.append("")
+
+            r = detect_wavec_setup(closes)
+            if r:
+                found = True
+                lines.append(f"📉 <b>Wave C Breakdown</b>")
+                lines.append(f"   WC: -{r['wc_drop_pct']:.1f}% ต่ำกว่า WA low ${r['wa_bottom']:,.2f}")
+                lines.append(f"   🎯 Target: ${r['ext_162']:,.2f} / ${r['ext_262']:,.2f}")
+                lines.append(f"   CDC: {r['cdc_status']}")
+                lines.append("")
+
+            r = detect_waveab_setup(closes)
+            if r:
+                found = True
+                lines.append(f"🐻 <b>Wave A→B Setup</b>")
+                lines.append(f"   WB retrace {r['retrace_pct']}% {r['fib_label']}")
+                lines.append(f"   top: ${r['wa_start']:,.2f}  WA low: ${r['wa_bottom']:,.2f}")
+                lines.append(f"   CDC: {r['cdc_status']}")
+                lines.append("")
+
+            r = detect_wave45_bear_setup(closes)
+            if r:
+                found = True
+                lines.append(f"⚡ <b>Wave 4→5 Bear</b>")
+                lines.append(f"   W4 bounce {r['bounce_pct']:.1f}% {r['fib_label']}")
+                lines.append(f"   drop: -{r['total_drop_pct']:.1f}%  CDC: {r['cdc_status']}")
+                lines.append(f"   🎯 W5 target: ${r['w5_target_min']:,.2f} / ${r['w5_target_std']:,.2f}")
+                lines.append("")
+
+            if not found:
+                lines.append("ไม่พบ wave setup ตอนนี้")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"⚠️ Error scanning {sym}: {str(e)[:120]}"
+
+    # /help
+    if cmd == "/help":
+        return (
+            "🤖 <b>TradingView Bot Commands</b>\n\n"
+            "/run — รัน Daily Report ทันที\n"
+            "/status — เช็คสถานะ report วันนี้\n"
+            "/scan AAPL — scan wave setup 1 ตัว\n"
+            "/help — แสดงคำสั่งทั้งหมด"
+        )
+
+    return None  # unknown command
+
+
+def _telegram_bot_loop() -> None:
+    """
+    Long-poll Telegram getUpdates in background thread.
+    Responds only to CHAT (authorised chat ID).
+    """
+    global _bot_offset
+    import time
+    while True:
+        try:
+            url = (
+                f"https://api.telegram.org/bot{BOT}/getUpdates"
+                f"?offset={_bot_offset}&timeout=30&allowed_updates=[\"message\"]"
+            )
+            resp = json.loads(urllib.request.urlopen(url, timeout=35).read())
+            for update in resp.get("result", []):
+                _bot_offset = update["update_id"] + 1
+                msg     = update.get("message", {})
+                text    = msg.get("text", "")
+                chat_id = str(msg.get("chat", {}).get("id", ""))
+
+                if not text.startswith("/"):
+                    continue
+                if chat_id != CHAT:
+                    continue  # security: only authorised chat
+
+                reply = _handle_bot_command(text)
+                if reply:
+                    _tg_send(reply)
+        except Exception:
+            time.sleep(5)
+
+
 def _apply_schedule(cfg: dict) -> None:
     sch = cfg.get("schedule", {})
     hour   = int(sch.get("hour", 7))
@@ -558,6 +725,8 @@ def startup() -> None:
     scheduler.start()
     # ── Catch-up: if service restarted during the report window, run now ──────
     _startup_catchup(cfg)
+    # ── Telegram bot command listener (long-poll in background) ───────────────
+    threading.Thread(target=_telegram_bot_loop, daemon=True).start()
 
 @app.on_event("shutdown")
 def shutdown() -> None:
