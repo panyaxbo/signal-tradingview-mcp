@@ -593,8 +593,14 @@ def _handle_bot_command(text: str) -> Optional[str]:
                 ex_date = (tk.info or {}).get("exDividendDate")
 
                 if not divs.empty:
+                    # Normalise index to UTC before comparing (handles any source tz)
+                    divs_utc   = divs.copy()
+                    if divs_utc.index.tz is None:
+                        divs_utc.index = divs_utc.index.tz_localize("UTC")
+                    else:
+                        divs_utc.index = divs_utc.index.tz_convert("UTC")
                     one_yr_ago  = pd.Timestamp.now(tz="UTC") - pd.DateOffset(years=1)
-                    recent_divs = divs[divs.index >= one_yr_ago]
+                    recent_divs = divs_utc[divs_utc.index >= one_yr_ago]
                     n_payments  = len(recent_divs)
                     annual_div  = float(recent_divs.sum())
 
