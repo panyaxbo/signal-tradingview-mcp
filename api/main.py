@@ -716,6 +716,61 @@ def _handle_bot_command(text: str) -> Optional[str]:
                     "",
                 ]
 
+            # ── Confluence Score ───────────────────────────────────────────
+            score  = 0
+            clues  = []
+            # collect best wave result
+            _best = (
+                detect_wave3_setup(closes)       or
+                detect_wave12_setup(closes)      or
+                detect_wave45_setup(closes)      or
+                detect_wavec_setup(closes)       or
+                detect_waveab_setup(closes)      or
+                detect_wave45_bear_setup(closes)
+            )
+            if _best:
+                d = _best.get("direction","")
+                # Wave type score
+                if d == "bull_w3":
+                    score += 2; clues.append("🚀 Wave 3 breakout")
+                elif d == "bull_w45" and _best.get("cdc_status") in ("w5_starting","w5_confirmed"):
+                    score += 2; clues.append("⚡ Wave 5 starting")
+                elif d in ("bull","bull_w45"):
+                    score += 1; clues.append("🐂 Bull wave setup")
+                elif d == "bear_wc":
+                    score += 2; clues.append("📉 Wave C breakdown")
+                elif d == "bear_w45" and _best.get("cdc_status") in ("w5_starting","w5_confirmed"):
+                    score += 2; clues.append("⚡ Bear W5 starting")
+                elif d in ("bear","bear_w45"):
+                    score += 1; clues.append("🐻 Bear wave setup")
+
+                # CDC confirmed
+                cs = _best.get("cdc_status","")
+                if cs in ("fresh_cross","just_crossed","w5_starting","w5_confirmed"):
+                    score += 1; clues.append("✅ CDC confirmed")
+                elif cs in ("fresh_cross_down","just_crossed_down"):
+                    score += 1; clues.append("✅ CDC confirmed ลง")
+
+                # Fib quality (W2/WB at 50-61.8% = ideal)
+                rp = _best.get("retrace_pct") or _best.get("pullback_pct") or _best.get("bounce_pct",0)
+                if 45 <= rp <= 68:
+                    score += 1; clues.append(f"📏 Fib {rp:.1f}% (ideal zone)")
+
+            # 52W position bonus
+            range52 = hi52 - lo52
+            pos52   = (cur - lo52) / range52 * 100 if range52 > 0 else 50
+            if _best and _best.get("direction","").startswith("bull") and pos52 < 35:
+                score += 1; clues.append(f"📉 Near 52W low ({pos52:.0f}%)")
+            elif _best and _best.get("direction","").startswith("bear") and pos52 > 65:
+                score += 1; clues.append(f"📈 Near 52W high ({pos52:.0f}%)")
+
+            if found and score > 0:
+                stars = "⭐" * min(score, 5)
+                lines.append(f"🎯 <b>Confluence: {stars}</b>  ({score} pts)")
+                for c in clues:
+                    lines.append(f"   {c}")
+                lines.append("")
+
             if not found:
                 lines.append("📭 ไม่พบ wave setup ที่ match criteria")
                 lines.append("(ต้องการ downtrend/uptrend ≥20% + bounce/drop ≥10%)")

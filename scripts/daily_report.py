@@ -196,30 +196,74 @@ print("Step 2 done")
 
 # ── STEP 3 — AI Deep Analysis ─────────────────────────────────────────────────
 
-def deepseek_analyze(label: str, tv_sig: str, cdc_zone: str, combined: str, price_str: str) -> dict:
+_TRADING_KNOWLEDGE = """
+## Elliott Wave Rules
+- Wave 2 must NOT retrace more than 100% of Wave 1
+- Wave 3 must NOT be the shortest impulse wave
+- Wave 4 must NOT overlap Wave 1 price territory
+- Wave 2 typically retraces 50–61.8% of Wave 1 (ideal entry zone)
+- Wave 3 typically extends 161.8% of Wave 1 (strongest move)
+- Wave 4 typically retraces 38.2% (shallow — alternation with W2)
+- Wave 5 typically equals Wave 1 in length
+- ABC corrective: Wave C often equals Wave A (100%) or extends to 161.8%
+
+## Wyckoff Logic
+- Spring: price breaks below support then recovers quickly → strong Long signal
+- LPS (Last Point of Support): low-volume pullback after SOS → best Long entry
+- UTAD: price breaks above resistance then falls back → Short signal
+- LPSY: weak bounce after SOW, low momentum → Short entry
+
+## Confluence (signal strength)
+Strong signal = 2+ of:
+  1. Elliott Wave phase confirmed at correct Fib level
+  2. Wyckoff phase aligned (e.g. Spring + Wave 1 bottom)
+  3. CDC Action Zone confirms (EMA12 crosses EMA26)
+
+## Signal Table
+| Setup | Condition | Action |
+|-------|-----------|--------|
+| Wave 3 start | W2 ends at Fib 61.8% + CDC cross up | Strong Buy |
+| Wave 5 end | Divergence + Fib ext 161.8% reached | Close Long |
+| ABC complete | Wave C = Wave A + reversal candle | Buy (trend continuation) |
+| Spring | Break low + recover + volume dries | Long |
+"""
+
+
+def deepseek_analyze(label: str, tv_sig: str, cdc_zone: str, combined: str, price_str: str,
+                     wave_context: str = "") -> dict:
     from openai import OpenAI
     client = OpenAI(
         api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
         base_url="https://api.deepseek.com/v1",
     )
-    prompt = (
-        f"You are an expert financial analyst. Analyze {label}.\n\n"
+    wave_section = f"\nWave/Pattern Context:\n{wave_context}\n" if wave_context else ""
+    system_msg = (
+        "You are an expert quantitative trader specializing in Elliott Wave, "
+        "Wyckoff methodology, and CDC Action Zone signals.\n\n"
+        + _TRADING_KNOWLEDGE
+    )
+    user_msg = (
+        f"Analyze {label}.\n\n"
         f"Current signals:\n"
         f"- TradingView Signal: {tv_sig}\n"
         f"- CDC Action Zone: {cdc_zone}\n"
         f"- Combined Signal: {combined}\n"
-        f"- Price: {price_str}\n\n"
+        f"- Price: {price_str}\n"
+        f"{wave_section}\n"
         'Respond ONLY in this exact JSON (no markdown):\n'
         '{"decision":"BUY|SELL|HOLD","confidence":75,'
         '"bull":"bullish reason max 15 words",'
         '"bear":"bearish risk max 15 words",'
         '"action":"actionable advice max 20 words"}'
     )
-    resp    = client.chat.completions.create(
+    resp = client.chat.completions.create(
         model="deepseek-chat",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user",   "content": user_msg},
+        ],
         temperature=0.3,
-        max_tokens=200,
+        max_tokens=250,
     )
     content = resp.choices[0].message.content.strip()
     content = re.sub(r"^```[a-z]*\n?|\n?```$", "", content).strip()
@@ -263,7 +307,15 @@ for item in AI_TARGETS:
     blk.append("")
 
     try:
-        ai  = deepseek_analyze(lbl, tv_sig, cdc_zone, comb_s, price_str)
+        # Build wave context string for richer AI analysis
+        _wctx_parts = []
+        if cdc_zone and cdc_zone != "-":
+            _wctx_parts.append(f"CDC Zone: {cdc_zone}")
+        if comb_s and comb_s != "NEUTRAL":
+            _wctx_parts.append(f"Combined signal: {comb_s}")
+        wave_ctx = " | ".join(_wctx_parts)
+
+        ai  = deepseek_analyze(lbl, tv_sig, cdc_zone, comb_s, price_str, wave_context=wave_ctx)
         dec = str(ai.get("decision", "HOLD")).upper()
         pct = int(ai.get("confidence", 60))
         de  = {"BUY": "✅", "SELL": "❌", "HOLD": "⏸"}.get(dec, "❓")
