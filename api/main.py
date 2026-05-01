@@ -635,8 +635,8 @@ def _handle_bot_command(text: str) -> Optional[str]:
                             ex_str = f"  |  Ex-div: {ex_dt.strftime('%d %b %Y')}"
 
                         div_line = (
-                            f"💵 Dividend: ${annual_div:.2f}/ปี  ({div_yield:.1f}%)"
-                            f"  ~${monthly_div:.2f}/เดือน\n"
+                            f"💵 Dividend: {currency}{annual_div:.2f}/ปี  ({div_yield:.1f}%)"
+                            f"  ~{currency}{monthly_div:.2f}/เดือน\n"
                             f"   📅 {freq_label}{ex_str}"
                         )
             except Exception:
