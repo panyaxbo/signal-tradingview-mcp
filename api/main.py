@@ -556,12 +556,25 @@ def _handle_bot_command(text: str) -> Optional[str]:
         if len(parts) < 2:
             return "📋 Usage: /scan AAPL [1D|1W]\nเช่น /scan AAPL หรือ /scan AAPL 1W"
         sym = parts[1].strip().upper()
+        # Auto-detect Thai stocks: SCB → SCB.BK, SCB.BK → SCB.BK
+        from tradingview_mcp.core.services.cdc_scanner_service import SET50, SET_EXTRA
+        _thai_base = {s.replace(".BK", "") for s in SET50 + SET_EXTRA}
+        if sym.endswith(".BK"):
+            is_thai = True
+        elif sym in _thai_base:
+            sym     = sym + ".BK"
+            is_thai = True
+        else:
+            is_thai = False
+        currency = "฿" if is_thai else "$"
+
         # Optional timeframe: /scan AAPL 1W  (default 1D)
         _TF_MAP = {"1d": "1d", "1w": "1wk", "1wk": "1wk", "1h": "1h"}
-        raw_tf  = parts[2].lower() if len(parts) >= 3 else "1d"
-        yf_tf   = _TF_MAP.get(raw_tf, "1d")
+        raw_tf   = parts[2].lower() if len(parts) >= 3 else "1d"
+        yf_tf    = _TF_MAP.get(raw_tf, "1d")
         tf_label = {"1d": "1D", "1wk": "1W", "1h": "1H"}.get(yf_tf, yf_tf.upper())
         period   = "2y" if yf_tf in ("1d", "1wk") else "3mo"
+        display_sym = sym.replace(".BK", "") if is_thai else sym
         try:
             from tradingview_mcp.core.services.cdc_scanner_service import (
                 detect_wave12_setup, detect_waveab_setup,
@@ -629,11 +642,13 @@ def _handle_bot_command(text: str) -> Optional[str]:
             except Exception:
                 pass
 
+            flag = "🇹🇭 " if is_thai else ""
+            fmt  = (lambda v: f"฿{v:,.2f}") if is_thai else (lambda v: f"${v:,.2f}")
             lines = [
-                f"🔍 <b>Wave Scan: {sym}</b>  [{tf_label}]",
-                f"💰 ${cur:,.2f}  ({chg1d:+.2f}% candle ล่าสุด)",
+                f"🔍 <b>{flag}Wave Scan: {display_sym}</b>  [{tf_label}]",
+                f"💰 {fmt(cur)}  ({chg1d:+.2f}% candle ล่าสุด)",
                 f"{zone['emoji']} CDC [{tf_label}]: {zone['zone']}  EMA12:{e12[-1]:,.2f} / EMA26:{e26[-1]:,.2f}",
-                f"📏 52W  H:${hi52:,.2f}  L:${lo52:,.2f}",
+                f"📏 52W  H:{fmt(hi52)}  L:{fmt(lo52)}",
             ]
             if div_line:
                 lines.append(div_line)

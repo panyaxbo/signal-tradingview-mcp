@@ -102,6 +102,41 @@ SP_500_EXTRA = [
 ]
 
 
+# ── SET Thailand symbol list (yfinance .BK suffix) ────────────────────────────
+
+SET50 = [
+    # Banking & Finance
+    "BBL.BK","KBANK.BK","KTB.BK","SCB.BK","BAY.BK","TTB.BK","TISCO.BK","KKP.BK",
+    # Energy & Petrochemical
+    "PTT.BK","PTTEP.BK","PTTGC.BK","TOP.BK","IRPC.BK","BCP.BK","SPRC.BK",
+    # Property & REIT
+    "CPN.BK","LH.BK","PSH.BK","SC.BK","SIRI.BK","ORI.BK","AP.BK",
+    # Consumer & Retail
+    "CPALL.BK","BJC.BK","HMPRO.BK","COM7.BK","MBK.BK","ROBINS.BK",
+    # Telecom & Tech
+    "ADVANC.BK","DTAC.BK","TRUE.BK","DELTA.BK","GULF.BK","GPSC.BK",
+    # Industrial & Transport
+    "SCC.BK","SCGP.BK","AOT.BK","BEM.BK","BTS.BK","AAV.BK","THAI.BK",
+    # Food & Agro
+    "TU.BK","CPF.BK","MINT.BK","OSP.BK","CBG.BK",
+    # Insurance & Other
+    "BLA.BK","THRE.BK","IVL.BK","SAWAD.BK","MTC.BK","TIDLOR.BK",
+]
+
+SET_EXTRA = [
+    # Mid-cap หุ้นที่นิยม
+    "BDMS.BK","BH.BK","BCH.BK","CHG.BK",          # Healthcare
+    "WHA.BK","AMATA.BK","ROJNA.BK",                # Industrial estate
+    "GFPT.BK","NRF.BK","TFG.BK",                   # Food
+    "RATCH.BK","EGCO.BK","CKP.BK","BCPG.BK",       # Power
+    "JMART.BK","JMT.BK","SINGER.BK",               # Hire-purchase
+    "PR9.BK","VGI.BK","PLANB.BK",                  # Media
+    "CENTEL.BK","ERW.BK","MINT.BK",                # Tourism
+    "GLOBAL.BK","MAKRO.BK","CRC.BK",               # Retail
+    "KCE.BK","HANA.BK","SVI.BK",                   # Electronics
+]
+
+
 def get_all_index_symbols() -> list[str]:
     """
     Return deduplicated union of DOW 30 + NASDAQ 100 + S&P 500 extra symbols.
@@ -1429,4 +1464,151 @@ def format_wave45_bear_section(
                 f"   drop-{r['total_drop_pct']:.1f}%  top:${r['w_top']:,.2f}  {cdc}"
             )
             lines.append("")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SET Thailand Wave Scanner
+# ══════════════════════════════════════════════════════════════════════════════
+
+def scan_thai_setups(
+    symbols: list[str] | None = None,
+    period: str = "1y",
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    """
+    Scan SET Thailand stocks (yfinance .BK suffix) for all 6 wave patterns.
+    Same logic as scan_all_setups but labels strip the .BK suffix for display.
+    Returns (w12, wab, w3, wc, w45, w45b)
+    """
+    if symbols is None:
+        symbols = sorted(set(SET50 + SET_EXTRA))
+
+    closes_map: dict[str, list[float]] = {}
+    try:
+        closes_map = _batch_fetch_closes(symbols, period=period, chunk_size=50)
+    except Exception:
+        pass
+
+    w12_results:  list[dict] = []
+    wab_results:  list[dict] = []
+    w3_results:   list[dict] = []
+    wc_results:   list[dict] = []
+    w45_results:  list[dict] = []
+    w45b_results: list[dict] = []
+
+    _detectors = [
+        (detect_wave12_setup,      w12_results),
+        (detect_waveab_setup,      wab_results),
+        (detect_wave3_setup,       w3_results),
+        (detect_wavec_setup,       wc_results),
+        (detect_wave45_setup,      w45_results),
+        (detect_wave45_bear_setup, w45b_results),
+    ]
+
+    for sym, closes in closes_map.items():
+        label = sym.replace(".BK", "")   # display without suffix
+        for detector, bucket in _detectors:
+            try:
+                r = detector(closes)
+                if r:
+                    r["ticker"] = sym
+                    r["label"]  = label
+                    r["currency"] = "฿"
+                    bucket.append(r)
+            except Exception:
+                pass
+
+    _pri_bull  = {"fresh_cross": 0, "just_crossed": 1, "watch": 2, "bullish": 3}
+    _pri_bear  = {"fresh_cross_down": 0, "just_crossed_down": 1, "watch_bear": 2, "bearish": 3}
+    _pri_w45   = {"w5_starting": 0, "w5_confirmed": 1, "w4_fresh": 2, "in_w4": 3, "watch": 4}
+    _pri_w45b  = {"w5_starting": 0, "w5_confirmed": 1, "w4_fresh": 2, "in_w4_bounce": 3, "watch_bear": 4}
+
+    w12_results.sort(key=lambda x: (_pri_bull.get(x["cdc_status"], 9),  -x["retrace_pct"]))
+    wab_results.sort(key=lambda x: (_pri_bear.get(x["cdc_status"], 9),  -x["retrace_pct"]))
+    w3_results.sort( key=lambda x: (_pri_bull.get(x["cdc_status"], 9),  -x["w3_gain_pct"]))
+    wc_results.sort( key=lambda x: (_pri_bear.get(x["cdc_status"], 9),  -x["wc_drop_pct"]))
+    w45_results.sort(key=lambda x: (_pri_w45.get(x["cdc_status"],  9),  -x["total_run_pct"]))
+    w45b_results.sort(key=lambda x: (_pri_w45b.get(x["cdc_status"], 9), -x["total_drop_pct"]))
+
+    return w12_results, wab_results, w3_results, wc_results, w45_results, w45b_results
+
+
+def _fmt_thai_price(price: float) -> str:
+    """Format Thai baht price (no decimals for stocks >10, 2dp for <10)."""
+    return f"฿{price:,.2f}" if price < 10 else f"฿{price:,.1f}"
+
+
+def format_thai_wave_section(
+    title: str,
+    results: list[dict],
+    no_signal_text: str = "ไม่พบ setup",
+) -> str:
+    """
+    Format Thai wave results — same 2-line style but ฿ currency.
+    Works for any wave type; uses 'direction' to pick right fields.
+    """
+    lines = [f"<b>{title}</b>", ""]
+    if not results:
+        lines.append(no_signal_text)
+        return "\n".join(lines)
+
+    for r in results:
+        zone = r["cdc_zone"]
+        d    = r.get("direction", "bull")
+        lbl  = r["label"]
+        cur  = _fmt_thai_price(r["current_price"])
+
+        if d == "bull":
+            cdc = _W12_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  W2:{r['retrace_pct']}% {r['fib_label']}"
+                f"  🎯{_fmt_thai_price(r['fib_618'])}/{_fmt_thai_price(r['fib_786'])}\n"
+                f"   ↓{r['downtrend_pct']}% W1+{r['wave1_gain_pct']}%"
+                f"  bot:{_fmt_thai_price(r['w1_start'])}  {cdc}"
+            )
+        elif d == "bear":
+            cdc = _WAB_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  WB:{r['retrace_pct']}% {r['fib_label']}"
+                f"  🎯{_fmt_thai_price(r['fib_618'])}/{_fmt_thai_price(r['fib_786'])}\n"
+                f"   ↑{r['uptrend_pct']}% WA-{r['wavea_drop_pct']}%"
+                f"  top:{_fmt_thai_price(r['wa_start'])}  {cdc}"
+            )
+        elif d == "bull_w3":
+            cdc = _W3_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  W3:+{r['w3_gain_pct']:.1f}%"
+                f"  🎯{_fmt_thai_price(r['ext_162'])}/{_fmt_thai_price(r['ext_262'])}\n"
+                f"   ↓{r['downtrend_pct']}% W1+{r['wave1_gain_pct']}%"
+                f"  bot:{_fmt_thai_price(r['w1_start'])}  {cdc}"
+            )
+        elif d == "bear_wc":
+            cdc = _WC_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  WC:-{r['wc_drop_pct']:.1f}%"
+                f"  🎯{_fmt_thai_price(r['ext_162'])}/{_fmt_thai_price(r['ext_262'])}\n"
+                f"   ↑{r['uptrend_pct']}% WA-{r['wavea_drop_pct']}%"
+                f"  top:{_fmt_thai_price(r['wa_start'])}  {cdc}"
+            )
+        elif d == "bull_w45":
+            cdc = _W45_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  W4:{r['pullback_pct']:.1f}% {r['fib_label']}"
+                f"  🎯{_fmt_thai_price(r['w5_target_min'])}/{_fmt_thai_price(r['w5_target_std'])}\n"
+                f"   run+{r['total_run_pct']:.1f}%  bot:{_fmt_thai_price(r['w_bottom'])}  {cdc}"
+            )
+        elif d == "bear_w45":
+            cdc = _W45B_CDC_LABEL.get(r["cdc_status"], r["cdc_status"])
+            lines.append(
+                f"{zone['emoji']} <b>{lbl}</b>  {cur}"
+                f"  W4b:{r['bounce_pct']:.1f}% {r['fib_label']}"
+                f"  🎯{_fmt_thai_price(r['w5_target_min'])}/{_fmt_thai_price(r['w5_target_std'])}\n"
+                f"   drop-{r['total_drop_pct']:.1f}%  top:{_fmt_thai_price(r['w_top'])}  {cdc}"
+            )
+        lines.append("")
     return "\n".join(lines)

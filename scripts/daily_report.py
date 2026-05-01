@@ -280,11 +280,12 @@ for item in AI_TARGETS:
 
 # ── STEP 4 — Full Elliott Wave Scanner (all 6 patterns, download once) ────────
 from tradingview_mcp.core.services.cdc_scanner_service import (
-    scan_all_setups,
+    scan_all_setups, scan_thai_setups,
     format_wave12_section, format_waveab_section,
     format_wave3_section,  format_wavec_section,
     format_wave45_section, format_wave45_bear_section,
-    DOW_30, NASDAQ_100, SP_500_EXTRA,
+    format_thai_wave_section,
+    DOW_30, NASDAQ_100, SP_500_EXTRA, SET50, SET_EXTRA,
 )
 
 cdc_cfg = CFG.get("cdc_scanner", {})
@@ -400,4 +401,55 @@ if cdc_cfg.get("wave12", True):
             print(f"Step 4: watchlist sync warning: {e}")
 
 print("Step 4 done")
+
+
+# ── STEP 5 — SET Thailand Wave Scanner ───────────────────────────────────────
+if cdc_cfg.get("thai", True):
+    send("🇹🇭 <b>SET Thailand Wave Scanner</b>\n⏳ กำลัง scan หุ้นไทย...")
+
+    th_universe: list[str] = []
+    if cdc_cfg.get("set50",      True): th_universe += SET50
+    if cdc_cfg.get("set_extra",  True): th_universe += SET_EXTRA
+    # Allow custom Thai list from config
+    th_universe += cdc_cfg.get("thai_extra", [])
+    th_universe = sorted(set(th_universe))
+
+    th_w12, th_wab, th_w3, th_wc, th_w45, th_w45b = \
+        scan_thai_setups(symbols=th_universe, period="1y")
+
+    # Bull setups
+    th_bull_all = th_w3 + [r for r in th_w12 if r["cdc_status"] in ("fresh_cross","just_crossed")] + \
+                  [r for r in th_w45 if r["cdc_status"] in ("w5_starting","w5_confirmed")]
+    th_bull_watch = [r for r in th_w12 if r["cdc_status"] in ("watch","bullish")] + \
+                    [r for r in th_w45 if r["cdc_status"] in ("w4_fresh","in_w4")]
+
+    # Bear setups
+    th_bear_all = th_wc + [r for r in th_wab if r["cdc_status"] in ("fresh_cross_down","just_crossed_down")] + \
+                  [r for r in th_w45b if r["cdc_status"] in ("w5_starting","w5_confirmed")]
+    th_bear_watch = [r for r in th_wab if r["cdc_status"] in ("watch_bear","bearish")] + \
+                    [r for r in th_w45b if r["cdc_status"] in ("w4_fresh","in_w4_bounce")]
+
+    send(format_thai_wave_section(
+        f"🇹🇭🐂 SET BULL SETUPS — CONFIRMED ({len(th_bull_all)} ตัว)",
+        th_bull_all,
+        no_signal_text="ไม่พบ bull setup หุ้นไทยวันนี้",
+    ))
+    send(format_thai_wave_section(
+        f"🇹🇭🐂 SET BULL — WATCH LIST ({len(th_bull_watch)} ตัว)",
+        th_bull_watch,
+        no_signal_text="ไม่พบ bull watch หุ้นไทยวันนี้",
+    ))
+    send(format_thai_wave_section(
+        f"🇹🇭🐻 SET BEAR SETUPS — CONFIRMED ({len(th_bear_all)} ตัว)",
+        th_bear_all,
+        no_signal_text="ไม่พบ bear setup หุ้นไทยวันนี้",
+    ))
+    send(format_thai_wave_section(
+        f"🇹🇭🐻 SET BEAR — WATCH LIST ({len(th_bear_watch)} ตัว)",
+        th_bear_watch,
+        no_signal_text="ไม่พบ bear watch หุ้นไทยวันนี้",
+    ))
+
+    print("Step 5 done")
+
 print("All steps complete!")
